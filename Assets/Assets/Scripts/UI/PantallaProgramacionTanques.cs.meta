@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 7dded206c36fbe64da850c805cf782bb
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - spriteFondoPantalla: {fileID: 21300000, guid: d7ab28919c7f6a14aa73c0d4bd001c0b, type: 3}
+  - spriteMarcoPanel: {fileID: 21300000, guid: 7b758e0434ccb244c956f0a2fe8c88ad, type: 3}
+  - spriteFondoBoton: {fileID: 21300000, guid: 6bd99c74971b1ea40b86ec257b1ff7f3, type: 3}
+  - spriteIconoEmblema: {fileID: 21300000, guid: 59a5854c2fc954844961737a346725a4, type: 3}
+  - spriteIconoHistorial: {fileID: 21300000, guid: ae67964b30f369c419045e232436e0b8, type: 3}
+  - spriteVistaPreviaTanque: {fileID: 21300000, guid: 5789329caa4e34b4c9147e49f999148d, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
