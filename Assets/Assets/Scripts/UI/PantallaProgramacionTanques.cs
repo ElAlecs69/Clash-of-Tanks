@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -14,12 +15,20 @@ namespace TanksGame.UI
     // Pantalla "Programación de Tanques" (barra superior + historial + terminal/editor +
     // vista previa del tanque + personalización de skin).
     //
-    // A propósito sigue usando colores planos y rectángulos simples: la idea es que
-    // reemplaces cada pieza por tu arte final (fondo, iconos, fuente) directo en el
-    // Inspector después, sin tener que rearmar el layout. Los 5 contenedores principales
-    // (barra superior + 4 paneles) usan anclajes elásticos, así que la pantalla siempre
-    // cubre toda la ventana sin importar la resolución — el espacio extra se lo queda el
-    // panel de la terminal (más ancho/alto) y el de personalizar skin (más alto).
+    // Flujo de programación de tanques (resumen):
+    //  1. Escribís el script del tanque en el editor.
+    //  2. Tocás "GUARDAR" (pie de la Terminal): valida la sintaxis, lo agrega al
+    //     Historial como "Tanque N" y cuenta ese tanque como programado. El editor se
+    //     limpia solo después de cada guardado, así podés seguir directo con el
+    //     próximo tanque (mientras no se llegue al mínimo jugable, esto es obligatorio).
+    //  3. "ELIMINAR SCRIPT DE TANQUE" (arriba a la derecha de la Terminal) alterna un
+    //     modo donde aparece un "-" junto a cada tanque del Historial, para borrar el
+    //     que quieras.
+    //  4. "INICIAR" (barra superior) arranca la partida — exige que ya se haya
+    //     alcanzado el mínimo de tanques programados.
+    //  El botón "GUARDAR SCRIPT" (.TXT, en la barra superior) es independiente de todo
+    //  esto: sirve para exportar el contenido actual del editor a un archivo con
+    //  cualquier nombre que el jugador quiera, para reutilizarlo más adelante.
     public class PantallaProgramacionTanques : MonoBehaviour
     {
         [Header("Colores placeholder (se usan solo si no asignas un sprite abajo)")]
@@ -34,7 +43,7 @@ namespace TanksGame.UI
         public Color colorSwatchSeleccionado = new Color(0.75f, 0.6f, 0.15f);
 
         [Header("Decoración estilo militar (nativa, sin imágenes)")]
-        [Tooltip("Color de los brackets tipo HUD en las esquinas de cada panel y de las franjas de acento bajo los títulos. Mismo tono dorado que MenuPrincipal, para que combinen.")]
+        [Tooltip("Color de los brackets tipo HUD en las esquinas de cada panel y de las franjas de acento bajo los títulos.")]
         public Color colorAcentoMilitar = new Color(0.85f, 0.65f, 0.15f);
         [Tooltip("Si está activo, se agrega una viñeta sutil (oscurece los bordes) sobre el fondo.")]
         public bool usarVinetaDeFondo = true;
@@ -44,7 +53,6 @@ namespace TanksGame.UI
         public Sprite spriteMarcoPanel;      // Se reutiliza en la barra superior y los 4 paneles.
         public Sprite spriteFondoBoton;      // Se reutiliza en los 5 botones de acción.
         public Sprite spriteIconoHistorial;  // Se reutiliza en cada fila del historial.
-        public Sprite spriteVistaPreviaTanque;
 
         [Header("Guardado en disco")]
         [Tooltip("Subcarpeta dentro de Application.persistentDataPath donde se guardan los .txt.")]
@@ -64,6 +72,35 @@ namespace TanksGame.UI
         [Range(0f, 1f)]
         public float volumenMusica = 0.5f;
 
+        [Header("Vista previa 3D del tanque (opcional)")]
+        [Tooltip("Si asignás un prefab acá (ej. el Tank_006 del asset pack), se muestra el modelo 3D real (renderizado por una cámara aparte a una textura) en vez de la silueta dibujada por código.")]
+        public GameObject prefabTanquePreview;
+        [Tooltip("Rotación inicial del modelo dentro del 'escenario' de la vista previa, para elegir un buen ángulo de cámara.")]
+        public Vector3 rotacionInicialTanque = new Vector3(10f, 200f, 0f);
+        public bool rotarTanquePreview = true;
+        public float velocidadRotacionPreview = 20f;
+        [Tooltip("Nombres (o parte del nombre) de las mallas del modelo que NO deben pintarse con la skin — ej. orugas, ruedas, vidrios. Sin distinguir mayúsculas/minúsculas.")]
+        public string[] partesExcluidasDeSkin = { "track", "wheel", "glass", "rueda", "oruga", "vidrio" };
+
+        [Header("Control de cámara con mouse (arrastrar = orbitar, rueda = zoom)")]
+        public float distanciaInicialCamara = 4.5f;
+        public float elevacionInicialCamara = 15f;
+        public float distanciaMinCamara = 1.8f;
+        public float distanciaMaxCamara = 9f;
+        public float velocidadOrbita = 0.3f;
+        public float velocidadZoomCamara = 0.6f;
+
+        [Header("Programación de tanques (mínimo/máximo)")]
+        [Tooltip("No se puede jugar con menos tanques que este número; se fuerza a seguir programando hasta llegar acá.")]
+        public int cantidadMinimaTanquesParaJugar = 2;
+        [Tooltip("Tope de tanques que se pueden programar en total.")]
+        public int cantidadMaximaTanques = 6;
+
+        [Header("Tamaño del tablero")]
+        [Tooltip("Tamaño NxN sugerido al entrar a la pantalla (se ajusta solo hacia arriba si queda por debajo del mínimo permitido).")]
+        public int tamanoTableroInicial = 8;
+        private const int TAMANO_TABLERO_MAXIMO = 20;
+
         // --- Referencias vivas, creadas en tiempo de ejecución ---
         private InputField campoEditor;
         private Text textoResaltado;       // Overlay con colores de sintaxis, superpuesto al InputField (que queda con texto invisible).
@@ -76,38 +113,51 @@ namespace TanksGame.UI
         private GameObject overlayConfirmarBorrado;
         private AudioSource audioSourceMusica;
 
-        // Overlay "Guardar como" / "Abrir": reemplaza al viejo campo de texto fijo en la
-        // barra superior. El nombre del archivo ahora se pide recién al presionar
-        // GUARDAR SCRIPT o CARGAR SCRIPT, como el diálogo "Guardar como" de un SO.
+        // Overlay "Guardar como" / "Abrir": para EXPORTAR el script actual del editor a
+        // un .txt con cualquier nombre. Independiente del Historial (que usa nombres
+        // automáticos "Tanque N").
         private GameObject overlayNombreArchivo;
         private InputField campoNombreOverlay;
         private Text tituloOverlayNombre;
         private Text textoBotonConfirmarOverlay;
         private Action<string> accionConfirmarNombreArchivo;
-        private string nombreArchivoActual = ""; // Recordado internamente para reabrir/re-guardar rápido; no se muestra en pantalla.
+        private string nombreArchivoActual = "";
 
         // Rosa de los vientos: vive DENTRO del panel de la Terminal, abajo a la derecha,
-        // de forma permanente. Si hay una instrucción de las de
-        // 'comandosQueRequierenDireccion' escrita con paréntesis vacíos (ej. "MOV()"),
-        // tocar N/S/E/O la completa; si no hay ninguna pendiente, los botones
-        // simplemente no hacen nada (y el subtítulo lo indica).
+        // de forma permanente.
         private GameObject panelRosaVientos;
         private Text textoInstruccionPendienteDireccion;
 
-        // Palabras clave del lenguaje, para el resaltado de sintaxis (ver ColorearLinea).
+        // Botón "Eliminar script de tanque" (arriba a la derecha del panel de
+        // Terminal). Alterna un modo donde aparece un "-" junto a cada tanque del
+        // Historial para poder borrarlo individualmente. Ver
+        // ActualizarBotonEliminarScript() / OnAlternarModoEliminar().
+        private Button botonEliminarScriptRef;
+        private Text textoBotonEliminarScript;
+        private bool modoEliminarActivo;
+
+        // Un script por tanque ya programado y validado, en el orden en que se programaron.
+        private readonly List<string> scriptsPorTanque = new List<string>();
+
+        // Control de tamaño de tablero (NxN): ahora vive como un "slot" más dentro de
+        // la fila de botones de acción (ver ConstruirControlTamanoTableroCompacto).
+        private int tamanoTablero;
+        private Text textoTamanoTablero;
+
+        private int ultimaPosicionCursorConocida;
+
         private static readonly string[] PalabrasClave =
         {
             "INICIO", "IF", "FIN", "MOV", "AMT", "MINA", "MISIL", "RADAR",
             "ESCUDO", "ESPERAR", "DAÑAR", "DAÑO", "BUCLE"
         };
 
-        // --- Datos de personalización del tanque (nativos, sin imágenes) ---
         private static readonly Color[] ColoresPrincipales =
         {
-            new Color(0.30f, 0.36f, 0.22f), // Verde militar
-            new Color(0.55f, 0.47f, 0.33f), // Arena
-            new Color(0.35f, 0.36f, 0.38f), // Gris urbano
-            new Color(0.20f, 0.28f, 0.34f), // Azul marino
+            new Color(0.30f, 0.36f, 0.22f),
+            new Color(0.55f, 0.47f, 0.33f),
+            new Color(0.35f, 0.36f, 0.38f),
+            new Color(0.20f, 0.28f, 0.34f),
         };
 
         private static readonly string[] SimbolosCalcomania = { "★", "✖", "●", "▲" };
@@ -123,17 +173,19 @@ namespace TanksGame.UI
         };
 
         private readonly List<EntradaHistorial> historial = new List<EntradaHistorial>();
-        // swatchesPorGrupo = el "marco" que se resalta al seleccionar (siempre gris/dorado).
-        // contenidoSwatchesPorGrupo = el contenido real de cada swatch (color/patrón/texto).
         private readonly Dictionary<string, List<Image>> swatchesPorGrupo = new Dictionary<string, List<Image>>();
         private readonly Dictionary<string, List<Image>> contenidoSwatchesPorGrupo = new Dictionary<string, List<Image>>();
         private readonly Dictionary<string, int> seleccionActual = new Dictionary<string, int>();
 
-        // Vista previa del tanque: se actualiza en vivo según las selecciones de arriba.
-        private Image imagenVistaPreviaTanque;
+        private Image imagenCascoTanque;
+        private Image imagenTorretaTanque;
+        private Image imagenCanonTanque;
         private Text textoDecalPreview;
         private Text textoNumeroPreview;
         private Image imagenBanderaPreview;
+
+        private Transform tanquePreviewInstancia;
+        private RenderTexture renderTexturaPreview;
 
         private class EntradaHistorial
         {
@@ -142,17 +194,10 @@ namespace TanksGame.UI
             public string contenido;
         }
 
-        // Punto de enganche para que GameManager (u otro script) recoja el último script
-        // validado con éxito. Es un campo estático simple a propósito: conectar esto con
-        // qué tanque/jugador específico recibe el programa depende de cómo termines de
-        // armar el flujo entre escenas (selección de jugador, etc.), así que se deja como
-        // el siguiente paso una vez definas eso.
-        public static string UltimoScriptValidado { get; private set; } = "";
+        public static List<string> ScriptsTanquesPartida { get; private set; } = new List<string>();
 
         private void Start()
         {
-            // Si la escena no tiene ninguna Cámara (y por lo tanto ningún AudioListener),
-            // la música no se reproduce. Nos aseguramos de que exista al menos uno.
             if (FindObjectOfType<AudioListener>() == null)
             {
                 gameObject.AddComponent<AudioListener>();
@@ -171,6 +216,15 @@ namespace TanksGame.UI
             ConstruirUI();
         }
 
+        private void Update()
+        {
+            if (campoEditor != null && campoEditor.isFocused)
+                ultimaPosicionCursorConocida = campoEditor.caretPosition;
+
+            if (rotarTanquePreview && tanquePreviewInstancia != null)
+                tanquePreviewInstancia.Rotate(Vector3.up, velocidadRotacionPreview * Time.deltaTime, Space.World);
+        }
+
         private void ConstruirUI()
         {
             if (FindObjectOfType<EventSystem>() == null)
@@ -185,7 +239,7 @@ namespace TanksGame.UI
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             var scaler = canvasGo.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1536, 1024); // mismo tamaño que tu mockup.
+            scaler.referenceResolution = new Vector2(1536, 1024);
             scaler.matchWidthOrHeight = 0.5f;
             canvasGo.AddComponent<GraphicRaycaster>();
             canvasGo.transform.SetParent(transform, false);
@@ -213,6 +267,10 @@ namespace TanksGame.UI
             }
 
             ConstruirBarraSuperior(canvasGo.transform);
+
+            tamanoTablero = tamanoTableroInicial;
+            ActualizarTamanoMinimoTablero(scriptsPorTanque.Count);
+
             ConstruirPanelHistorial(canvasGo.transform);
             ConstruirPanelInstrucciones(canvasGo.transform);
             ConstruirPanelTerminal(canvasGo.transform);
@@ -222,18 +280,19 @@ namespace TanksGame.UI
             ConstruirOverlayNombreArchivo(canvasGo.transform);
 
             ReconstruirListaHistorial();
+            ActualizarBotonEliminarScript();
             ActualizarTextoEstado("LISTO", esError: false);
         }
 
         // ------------------------------------------------------------------
-        // BARRA SUPERIOR: título + 5 botones de acción.
+        // BARRA SUPERIOR: título + 5 botones de acción + control de tablero (6to slot).
         // Ancla elástica: fija al borde superior, estirada a todo el ancho.
         // ------------------------------------------------------------------
 
         private const float ALTURA_BARRA = 215f;
         private const float MARGEN = 15f;
         private const float ANCHO_HISTORIAL = 325f;
-        private const float ANCHO_INSTRUCCIONES = 325f; // Mismo ancho que el panel de historial, como pediste.
+        private const float ANCHO_INSTRUCCIONES = 325f;
         private const float ANCHO_COLUMNA_DERECHA = 466f;
         private const float ALTO_VISTA_PREVIA = 320f;
         private const float GAP = 10f;
@@ -252,8 +311,11 @@ namespace TanksGame.UI
             AgregarFranjaAcento(barra.transform, 70f);
             AgregarBracketsDeEsquina(barra.transform, colorAcentoMilitar);
 
-            float anchoBoton = 289f, alto = 95f, y = 105f;
-            float[] xBotones = { 15, 319, 623, 927, 1231 };
+            // 6 slots del mismo ancho (5 botones + el control de tablero), repartidos
+            // en el mismo espacio horizontal que antes ocupaban los 5 botones solos.
+            float anchoBoton = 238f, alto = 95f, y = 105f;
+            float[] xBotones = { 15, 268, 521, 774, 1027 };
+            const float xControlTablero = 1280f;
 
             CrearBotonAccion(barra.transform, "BotonGuardarScript", "GUARDAR SCRIPT", ".TXT",
                 new Vector2(xBotones[0], y), new Vector2(anchoBoton, alto), colorBoton, OnGuardarScript);
@@ -263,13 +325,67 @@ namespace TanksGame.UI
                 new Vector2(xBotones[2], y), new Vector2(anchoBoton, alto), colorBotonAccentoRojo, OnVolverAlMenu, colorEsAccento: true);
             CrearBotonAccion(barra.transform, "BotonBorrarScript", "BORRAR SCRIPT", "",
                 new Vector2(xBotones[3], y), new Vector2(anchoBoton, alto), colorBoton, OnBorrarScript);
-            CrearBotonAccion(barra.transform, "BotonIniciarEjecucion", "INICIAR", "EJECUCIÓN",
-                new Vector2(xBotones[4], y), new Vector2(anchoBoton, alto), colorBotonAccentoVerde, OnIniciarEjecucion, colorEsAccento: true);
+            CrearBotonAccion(barra.transform, "BotonIniciarPartida", "INICIAR", "PARTIDA",
+                new Vector2(xBotones[4], y), new Vector2(anchoBoton, alto), colorBotonAccentoVerde, OnIniciarPartida, colorEsAccento: true);
+
+            ConstruirControlTamanoTableroCompacto(barra.transform, xControlTablero, y, anchoBoton, alto);
+        }
+
+        // Control de tamaño de tablero: mismo "slot" que un botón más de la fila de
+        // arriba (6to lugar, a la derecha de INICIAR PARTIDA), con una flecha "-" a la
+        // izquierda, un ícono de grilla 3x3 (representa el tablero) en el centro, el
+        // "N x N" arriba del ícono, y una flecha "+" a la derecha.
+        private void ConstruirControlTamanoTableroCompacto(Transform barra, float x, float y, float ancho, float alto)
+        {
+            var contenedor = CrearRect(barra, "ControlTamanoTablero", new Vector2(x, y), new Vector2(ancho, alto), colorPanel);
+
+            const float ladoFlecha = 34f;
+
+            var botonMenos = CrearRect(contenedor.transform, "BotonMenos",
+                new Vector2(4, (alto - ladoFlecha) / 2f), new Vector2(ladoFlecha, ladoFlecha), colorBoton);
+            var btnMenos = botonMenos.AddComponent<Button>();
+            btnMenos.targetGraphic = botonMenos.GetComponent<Image>();
+            btnMenos.onClick.AddListener(() => CambiarTamanoTablero(-1));
+            CrearTexto(botonMenos.transform, "Texto", "-", Vector2.zero, new Vector2(ladoFlecha, ladoFlecha),
+                20, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+
+            var botonMas = CrearRect(contenedor.transform, "BotonMas",
+                new Vector2(ancho - ladoFlecha - 4, (alto - ladoFlecha) / 2f), new Vector2(ladoFlecha, ladoFlecha), colorBoton);
+            var btnMas = botonMas.AddComponent<Button>();
+            btnMas.targetGraphic = botonMas.GetComponent<Image>();
+            btnMas.onClick.AddListener(() => CambiarTamanoTablero(1));
+            CrearTexto(botonMas.transform, "Texto", "+", Vector2.zero, new Vector2(ladoFlecha, ladoFlecha),
+                20, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+
+            textoTamanoTablero = CrearTexto(contenedor.transform, "TextoTamano", "7 x 7",
+                new Vector2(0, 8), new Vector2(ancho, 20), 13, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+
+            const float ladoIcono = 44f;
+            CrearIconoGrid3x3(contenedor.transform, new Vector2((ancho - ladoIcono) / 2f, 32), ladoIcono);
+        }
+
+        // Ícono de grilla 3x3 (representa visualmente "el tablero") hecho con 9
+        // cuadraditos, sin necesitar ninguna imagen.
+        private void CrearIconoGrid3x3(Transform padre, Vector2 posicion, float lado)
+        {
+            const int celdas = 3;
+            const float gap = 3f;
+            float tamanoCelda = (lado - gap * (celdas - 1)) / celdas;
+
+            for (int fila = 0; fila < celdas; fila++)
+            {
+                for (int columna = 0; columna < celdas; columna++)
+                {
+                    var pos = new Vector2(
+                        posicion.x + columna * (tamanoCelda + gap),
+                        posicion.y + fila * (tamanoCelda + gap));
+                    CrearRect(padre, $"CeldaIcono_{fila}_{columna}", pos, new Vector2(tamanoCelda, tamanoCelda), colorAcentoMilitar);
+                }
+            }
         }
 
         // ------------------------------------------------------------------
         // PANEL IZQUIERDO: historial de scripts ejecutados.
-        // Ancla elástica: fijo al borde izquierdo, ancho fijo, estirado en alto.
         // ------------------------------------------------------------------
 
         private void ConstruirPanelHistorial(Transform padre)
@@ -319,18 +435,30 @@ namespace TanksGame.UI
 
         private void CrearItemHistorial(Transform padre, EntradaHistorial entrada, Vector2 posicion)
         {
+            float anchoTexto = modoEliminarActivo ? 205 : 240;
+
             var fila = CrearRect(padre, $"Item_{entrada.nombre}", posicion, new Vector2(295, 55), new Color(0, 0, 0, 0));
 
             CrearRect(fila.transform, "Icono", new Vector2(0, 5), new Vector2(30, 30), colorTextoSecundario,
                 spriteIconoHistorial, sliced: false);
-            CrearTexto(fila.transform, "NombreArchivo", entrada.nombre, new Vector2(42, 0), new Vector2(240, 26),
+            CrearTexto(fila.transform, "NombreArchivo", entrada.nombre, new Vector2(42, 0), new Vector2(anchoTexto, 26),
                 16, FontStyle.Normal, TextAnchor.MiddleLeft, colorTexto);
-            CrearTexto(fila.transform, "Fecha", entrada.fechaHora, new Vector2(42, 26), new Vector2(240, 22),
+            CrearTexto(fila.transform, "Fecha", entrada.fechaHora, new Vector2(42, 26), new Vector2(anchoTexto, 22),
                 12, FontStyle.Normal, TextAnchor.MiddleLeft, colorTextoSecundario);
 
             var boton = fila.AddComponent<Button>();
             boton.targetGraphic = fila.GetComponent<Image>();
             boton.onClick.AddListener(() => OnSeleccionarHistorial(entrada));
+
+            if (modoEliminarActivo)
+            {
+                var botonEliminar = CrearRect(fila.transform, "BotonEliminar", new Vector2(295 - 34, 12), new Vector2(30, 30), colorBotonAccentoRojo);
+                var btnEliminar = botonEliminar.AddComponent<Button>();
+                btnEliminar.targetGraphic = botonEliminar.GetComponent<Image>();
+                btnEliminar.onClick.AddListener(() => OnEliminarTanque(entrada));
+                CrearTexto(botonEliminar.transform, "Texto", "-", Vector2.zero, new Vector2(30, 30),
+                    20, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            }
         }
 
         // ------------------------------------------------------------------
@@ -352,11 +480,6 @@ namespace TanksGame.UI
             AgregarFranjaAcento(panel.transform, 50f);
             AgregarBracketsDeEsquina(panel.transform, colorAcentoMilitar);
 
-            // etiqueta = lo que se ve en el botón; fragmento = lo que se inserta en el
-            // editor. Los que llevan "()" vacíos (MOV, AMT, RADAR, MISIL) son
-            // justamente los que después completa la rosa de los vientos.
-            // "IF" ahora inserta el bloque real IF (condición) { instrucción } en vez
-            // del viejo "IF CONDICIÓN THEN INSTRUCCIÓN".
             var instrucciones = new (string etiqueta, string fragmento)[]
             {
                 ("MOV (dir)", "MOV()"),
@@ -415,7 +538,7 @@ namespace TanksGame.UI
             var go = CrearRect(padre, $"Instruccion_{etiqueta}", new Vector2(15, y), new Vector2(295, 40), colorBoton);
             var boton = go.AddComponent<Button>();
             boton.targetGraphic = go.GetComponent<Image>();
-            boton.onClick.AddListener(() => InsertarEnEditor(fragmentoAInsertar + "\n"));
+            boton.onClick.AddListener(() => InsertarEnEditor(fragmentoAInsertar));
             CrearTexto(go.transform, "Texto", etiqueta, Vector2.zero, new Vector2(295, 40),
                 16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
         }
@@ -423,12 +546,15 @@ namespace TanksGame.UI
         private void InsertarEnEditor(string fragmento)
         {
             string texto = campoEditor.text;
-            if (texto.Length > 0 && !texto.EndsWith("\n"))
-                texto += "\n";
-            texto += fragmento;
+            int posicion = Mathf.Clamp(ultimaPosicionCursorConocida, 0, texto.Length);
 
-            campoEditor.text = texto;
-            ActualizarEditorTrasCambio();
+            string nuevoTexto = texto.Insert(posicion, fragmento);
+            campoEditor.text = nuevoTexto;
+            int nuevaPosicion = posicion + fragmento.Length;
+
+            ActualizarEditorSinMoverCursor();
+
+            ultimaPosicionCursorConocida = nuevaPosicion;
         }
 
         // ------------------------------------------------------------------
@@ -451,13 +577,17 @@ namespace TanksGame.UI
             AgregarFranjaAcento(panel.transform, 50f);
             AgregarBracketsDeEsquina(panel.transform, colorAcentoMilitar);
 
-            var botonBorrarLinea = CrearRectAncladoEsquina(panel.transform, "BotonBorrarUltimaLinea",
-                new Vector2(1, 1), 15, 15, 210, 30, colorBoton, null);
-            var btnBorrarLinea = botonBorrarLinea.AddComponent<Button>();
-            btnBorrarLinea.targetGraphic = botonBorrarLinea.GetComponent<Image>();
-            btnBorrarLinea.onClick.AddListener(OnBorrarUltimaInstruccion);
-            CrearTexto(botonBorrarLinea.transform, "Texto", "⌫ BORRAR ÚLTIMA LÍNEA", Vector2.zero, new Vector2(210, 30),
-                12, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            // Botón "Eliminar script de tanque": arranca oculto (recién se activa
+            // cuando ya hay al menos un tanque guardado). Al tocarlo, alterna el modo
+            // que muestra el "-" en cada fila del Historial.
+            var botonEliminarScript = CrearRectAncladoEsquina(panel.transform, "BotonEliminarScriptTanque",
+                new Vector2(1, 1), 15, 15, 240, 30, colorBotonAccentoRojo, null);
+            botonEliminarScriptRef = botonEliminarScript.AddComponent<Button>();
+            botonEliminarScriptRef.targetGraphic = botonEliminarScript.GetComponent<Image>();
+            botonEliminarScriptRef.onClick.AddListener(OnAlternarModoEliminar);
+            textoBotonEliminarScript = CrearTexto(botonEliminarScript.transform, "Texto", "ELIMINAR SCRIPT DE TANQUE",
+                Vector2.zero, new Vector2(240, 30), 11, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            botonEliminarScript.SetActive(false);
 
             var areaCodigo = CrearRectElasticoLocal(panel.transform, "AreaCodigo",
                 new Vector2(0, 0), new Vector2(1, 1),
@@ -477,14 +607,33 @@ namespace TanksGame.UI
 
             textoEstado = CrearRectElasticoTextoInferior(panel.transform);
 
+            var botonGuardarTanque = CrearRectElastico(panel.transform, "BotonGuardarScriptTanque",
+                new Vector2(0, 0), new Vector2(1, 0),
+                new Vector2(15, 46), new Vector2(-175, 85),
+                colorBoton, null);
+            var btnGuardarTanque = botonGuardarTanque.AddComponent<Button>();
+            btnGuardarTanque.targetGraphic = botonGuardarTanque.GetComponent<Image>();
+            btnGuardarTanque.onClick.AddListener(OnGuardarScriptDelTanque);
+
+            var textoGuardarTanqueGo = new GameObject("Texto");
+            textoGuardarTanqueGo.transform.SetParent(botonGuardarTanque.transform, false);
+            var textoGuardarTanque = textoGuardarTanqueGo.AddComponent<Text>();
+            textoGuardarTanque.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            textoGuardarTanque.fontSize = 14;
+            textoGuardarTanque.fontStyle = FontStyle.Bold;
+            textoGuardarTanque.alignment = TextAnchor.MiddleCenter;
+            textoGuardarTanque.color = colorTexto;
+            textoGuardarTanque.text = "GUARDAR";
+            var textoGuardarTanqueRect = textoGuardarTanqueGo.GetComponent<RectTransform>();
+            textoGuardarTanqueRect.anchorMin = Vector2.zero;
+            textoGuardarTanqueRect.anchorMax = Vector2.one;
+            textoGuardarTanqueRect.offsetMin = Vector2.zero;
+            textoGuardarTanqueRect.offsetMax = Vector2.zero;
+
             ConstruirPanelRosaVientos(panel.transform);
 
             campoEditor.onValueChanged.AddListener(_ =>
             {
-                // Actualizaciones "ligeras": se llaman en CADA tecla que se escribe.
-                // A propósito NO llaman a ActualizarEditorTrasCambio() acá (esa mueve
-                // el cursor al final del texto), porque eso rompería la edición normal
-                // — el cursor saltaría al final cada vez que escribís una letra.
                 ActualizarDeteccionDireccion();
                 ActualizarNumerosDeLinea();
                 ActualizarResaltadoSintaxis();
@@ -495,21 +644,26 @@ namespace TanksGame.UI
 
         private void ActualizarEditorTrasCambio()
         {
-            float alturaPreferida = campoEditor.textComponent.preferredHeight + 20f;
-            contenedorEditorRect.sizeDelta = new Vector2(contenedorEditorRect.sizeDelta.x, Mathf.Max(200f, alturaPreferida));
             campoEditor.caretPosition = campoEditor.text.Length;
+            ultimaPosicionCursorConocida = campoEditor.caretPosition;
+            ActualizarEditorSinMoverCursor();
 
-            Canvas.ForceUpdateCanvases();
             if (scrollTerminal != null)
                 scrollTerminal.verticalNormalizedPosition = 0f;
+        }
+
+        private void ActualizarEditorSinMoverCursor()
+        {
+            float alturaPreferida = campoEditor.textComponent.preferredHeight + 20f;
+            contenedorEditorRect.sizeDelta = new Vector2(contenedorEditorRect.sizeDelta.x, Mathf.Max(200f, alturaPreferida));
+
+            Canvas.ForceUpdateCanvases();
 
             ActualizarDeteccionDireccion();
             ActualizarNumerosDeLinea();
             ActualizarResaltadoSintaxis();
         }
 
-        // Actualiza la columna de números de línea (1, 2, 3...) a la izquierda del
-        // código, para que se vea como un editor de verdad.
         private void ActualizarNumerosDeLinea()
         {
             if (textoNumerosLinea == null) return;
@@ -523,11 +677,6 @@ namespace TanksGame.UI
             textoNumerosLinea.text = numeros.ToString();
         }
 
-        // Recolorea el texto: como el InputField real queda con su propio texto
-        // invisible (ver CrearCampoTextoMultilineaConScroll), lo que el jugador ve es
-        // este overlay con rich text. Como las etiquetas <color=...> no cambian el
-        // ancho de los caracteres, el overlay queda pixel a pixel alineado con el
-        // InputField real (y con el cursor, que pertenece al InputField real).
         private void ActualizarResaltadoSintaxis()
         {
             if (textoResaltado == null) return;
@@ -550,11 +699,8 @@ namespace TanksGame.UI
             string codigo = indiceComentario >= 0 ? linea.Substring(0, indiceComentario) : linea;
             string comentario = indiceComentario >= 0 ? linea.Substring(indiceComentario) : "";
 
-            // Palabras clave (INICIO, IF, MOV, ESPERAR, etc.) en celeste.
             codigo = Regex.Replace(codigo, PatronPalabrasClave, "<color=#4FC3F7>$1</color>");
-            // Direcciones dentro de paréntesis: (N), (S), (E), (O), en naranja.
             codigo = Regex.Replace(codigo, @"\(([NSEO])\)", "(<color=#FFB74D>$1</color>)");
-            // Números sueltos, en verde.
             codigo = Regex.Replace(codigo, @"\b(\d+)\b", "<color=#C3E88D>$1</color>");
 
             if (comentario.Length > 0)
@@ -576,10 +722,6 @@ namespace TanksGame.UI
             ActualizarEditorTrasCambio();
         }
 
-        // Al presionar Enter dentro del editor: en vez del salto de línea "a secas" que
-        // pondría un InputField normal, copia la indentación (espacios iniciales) de la
-        // línea actual, y le suma un nivel más (4 espacios) si esa línea termina en "{"
-        // — así el bloque de un IF/BUCLE recién abierto ya aparece indentado solo.
         private void InsertarNuevaLineaConIndentacion()
         {
             string texto = campoEditor.text;
@@ -650,23 +792,156 @@ namespace TanksGame.UI
             AgregarFranjaAcento(panel.transform, 48f);
             AgregarBracketsDeEsquina(panel.transform, colorAcentoMilitar);
 
-            var imagenPreviaGo = CrearRect(panel.transform, "ImagenVistaPreviaTanque", new Vector2(15, 60), new Vector2(436, 220),
-                colorFondoPantalla, spriteVistaPreviaTanque, sliced: false);
-            imagenVistaPreviaTanque = imagenPreviaGo.GetComponent<Image>();
+            var areaGo = CrearRect(panel.transform, "AreaVistaPreviaTanque", new Vector2(15, 60), new Vector2(436, 220), colorFondoPantalla);
 
-            // Overlays: decal grande al centro, número abajo a la derecha, bandera
-            // chica arriba a la izquierda. Todo se actualiza en ActualizarVistaPreviaTanque().
-            textoDecalPreview = CrearTexto(imagenPreviaGo.transform, "DecalPreview", SimbolosCalcomania[0],
-                new Vector2(178, 70), new Vector2(80, 80), 40, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            if (prefabTanquePreview != null)
+                ConstruirVistaPrevia3D(areaGo.transform);
+            else
+                ConstruirSiluetaTanque(areaGo.transform);
 
-            textoNumeroPreview = CrearTexto(imagenPreviaGo.transform, "NumeroPreview", NumerosTanque[0],
-                new Vector2(340, 178), new Vector2(80, 30), 22, FontStyle.Bold, TextAnchor.MiddleRight, colorTexto);
-
-            var banderaGo = CrearRect(imagenPreviaGo.transform, "BanderaPreview", new Vector2(10, 10), new Vector2(34, 22), ColoresBandera[0]);
+            textoDecalPreview = CrearTexto(areaGo.transform, "DecalPreview", SimbolosCalcomania[0],
+                new Vector2(10, 10), new Vector2(50, 40), 26, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            textoNumeroPreview = CrearTexto(areaGo.transform, "NumeroPreview", NumerosTanque[0],
+                new Vector2(356, 190), new Vector2(70, 24), 18, FontStyle.Bold, TextAnchor.MiddleRight, colorTexto);
+            var banderaGo = CrearRect(areaGo.transform, "BanderaPreview", new Vector2(396, 10), new Vector2(30, 20), ColoresBandera[0]);
             imagenBanderaPreview = banderaGo.GetComponent<Image>();
 
             CrearFlecha(panel.transform, "BotonSkinAnterior", "<", new Vector2(25, 150), () => OnCambiarSkin(-1));
             CrearFlecha(panel.transform, "BotonSkinSiguiente", ">", new Vector2(436 - 25, 150), () => OnCambiarSkin(1));
+        }
+
+        private void ConstruirVistaPrevia3D(Transform contenedorUI)
+        {
+            var escenario = new GameObject("EscenarioPreviaTanque");
+            escenario.transform.position = new Vector3(500f, 0f, 500f);
+
+            var instancia = Instantiate(prefabTanquePreview, escenario.transform);
+            instancia.transform.localPosition = Vector3.zero;
+            instancia.transform.localRotation = Quaternion.Euler(rotacionInicialTanque);
+            tanquePreviewInstancia = instancia.transform;
+
+            var luzGo = new GameObject("LuzPreviaTanque");
+            luzGo.transform.SetParent(escenario.transform, false);
+            luzGo.transform.rotation = Quaternion.Euler(40f, -30f, 0f);
+            var luz = luzGo.AddComponent<Light>();
+            luz.type = LightType.Directional;
+            luz.intensity = 1.2f;
+
+            var camaraGo = new GameObject("CamaraPreviaTanque");
+            camaraGo.transform.SetParent(escenario.transform, false);
+            var camara = camaraGo.AddComponent<Camera>();
+            camara.clearFlags = CameraClearFlags.SolidColor;
+            camara.backgroundColor = colorFondoPantalla;
+            camara.fieldOfView = 30f;
+
+            renderTexturaPreview = new RenderTexture(512, 512, 16);
+            camara.targetTexture = renderTexturaPreview;
+
+            var rawGo = new GameObject("RenderVistaPreviaTanque");
+            rawGo.transform.SetParent(contenedorUI, false);
+            var rawImg = rawGo.AddComponent<RawImage>();
+            rawImg.texture = renderTexturaPreview;
+            var rawRect = rawGo.GetComponent<RectTransform>();
+            rawRect.anchorMin = Vector2.zero;
+            rawRect.anchorMax = Vector2.one;
+            rawRect.offsetMin = Vector2.zero;
+            rawRect.offsetMax = Vector2.zero;
+
+            var controlador = rawGo.AddComponent<ControladorOrbitaCamara>();
+            controlador.camara = camaraGo.transform;
+            controlador.puntoMira = escenario.transform.position + Vector3.up * 0.5f;
+            controlador.distanciaMin = distanciaMinCamara;
+            controlador.distanciaMax = distanciaMaxCamara;
+            controlador.velocidadRotacion = velocidadOrbita;
+            controlador.velocidadZoom = velocidadZoomCamara;
+            controlador.alInteractuar = () => rotarTanquePreview = false;
+            controlador.alSoltar = () => rotarTanquePreview = true;
+            controlador.Inicializar(0f, elevacionInicialCamara, distanciaInicialCamara);
+        }
+
+        private class ControladorOrbitaCamara : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IScrollHandler
+        {
+            public Transform camara;
+            public Vector3 puntoMira;
+            public float distanciaMin = 1.5f;
+            public float distanciaMax = 10f;
+            public float velocidadRotacion = 0.3f;
+            public float velocidadZoom = 0.5f;
+            public System.Action alInteractuar;
+            public System.Action alSoltar;
+
+            private float azimut;
+            private float elevacion;
+            private float distancia;
+
+            public void Inicializar(float azimutInicial, float elevacionInicial, float distanciaInicial)
+            {
+                azimut = azimutInicial;
+                elevacion = elevacionInicial;
+                distancia = Mathf.Clamp(distanciaInicial, distanciaMin, distanciaMax);
+                AplicarTransform();
+            }
+
+            public void OnBeginDrag(PointerEventData eventData) => alInteractuar?.Invoke();
+
+            public void OnDrag(PointerEventData eventData)
+            {
+                azimut += eventData.delta.x * velocidadRotacion;
+                elevacion = Mathf.Clamp(elevacion - eventData.delta.y * velocidadRotacion, -85f, 85f);
+                AplicarTransform();
+            }
+
+            public void OnEndDrag(PointerEventData eventData) => alSoltar?.Invoke();
+
+            public void OnScroll(PointerEventData eventData)
+            {
+                distancia = Mathf.Clamp(distancia - eventData.scrollDelta.y * velocidadZoom, distanciaMin, distanciaMax);
+                AplicarTransform();
+            }
+
+            private void AplicarTransform()
+            {
+                var rotacion = Quaternion.Euler(elevacion, azimut, 0f);
+                var offset = rotacion * new Vector3(0f, 0f, -distancia);
+                camara.position = puntoMira + offset;
+                camara.LookAt(puntoMira);
+            }
+        }
+
+        private void ConstruirSiluetaTanque(Transform contenedor)
+        {
+            const float centroX = 218f, centroY = 110f;
+            const float anchoCasco = 260f, altoCasco = 90f;
+            const float anchoOruga = 260f, altoOruga = 18f;
+            const float ladoTorreta = 78f;
+            const float anchoCanon = 130f, altoCanon = 16f;
+
+            Color colorOrugas = new Color(0.16f, 0.16f, 0.17f);
+
+            CrearRect(contenedor, "OrugaSuperior",
+                new Vector2(centroX - anchoOruga / 2f, centroY - altoCasco / 2f - altoOruga),
+                new Vector2(anchoOruga, altoOruga), colorOrugas);
+            CrearRect(contenedor, "OrugaInferior",
+                new Vector2(centroX - anchoOruga / 2f, centroY + altoCasco / 2f),
+                new Vector2(anchoOruga, altoOruga), colorOrugas);
+
+            var cascoGo = CrearRect(contenedor, "Casco",
+                new Vector2(centroX - anchoCasco / 2f, centroY - altoCasco / 2f),
+                new Vector2(anchoCasco, altoCasco), colorSwatch);
+            imagenCascoTanque = cascoGo.GetComponent<Image>();
+
+            var canonGo = CrearRect(contenedor, "Canon",
+                new Vector2(centroX, centroY - altoCanon / 2f),
+                new Vector2(anchoCanon, altoCanon), colorSwatch);
+            imagenCanonTanque = canonGo.GetComponent<Image>();
+
+            var torretaGo = CrearRect(contenedor, "Torreta",
+                new Vector2(centroX - ladoTorreta / 2f, centroY - ladoTorreta / 2f),
+                new Vector2(ladoTorreta, ladoTorreta), colorSwatch);
+            imagenTorretaTanque = torretaGo.GetComponent<Image>();
+
+            CrearTexto(torretaGo.transform, "DecalTorreta", SimbolosCalcomania[0],
+                Vector2.zero, new Vector2(ladoTorreta, ladoTorreta), 24, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
         }
 
         // ------------------------------------------------------------------
@@ -696,9 +971,6 @@ namespace TanksGame.UI
             CrearTexto(contenido, "TituloColorPrincipal", "COLOR PRINCIPAL", new Vector2(245, 5), new Vector2(200, 22),
                 14, FontStyle.Bold, TextAnchor.MiddleLeft, colorTextoSecundario);
 
-            // El orden importa: "Color" debe crearse antes de llamar a
-            // RegenerarVisualesPatron() (los patrones de camuflaje se pintan con el
-            // color principal actualmente seleccionado).
             CrearFilaSwatches(contenido, "Patron", 4, new Vector2(15, 35));
             CrearFilaSwatches(contenido, "Color", 4, new Vector2(245, 35));
             AplicarColoresReales("Color", ColoresPrincipales);
@@ -722,10 +994,6 @@ namespace TanksGame.UI
             ActualizarVistaPreviaTanque();
         }
 
-        // Cada swatch ahora son 2 capas: un "marco" (lo que se resalta al
-        // seleccionar, siempre transparente u dorado) y, adentro, el "contenido" real
-        // (color/patrón/texto) que NUNCA cambia por selección — así un swatch puede
-        // mostrar su color/patrón/símbolo verdadero sin que el resaltado se lo tape.
         private void CrearFilaSwatches(Transform padre, string grupo, int cantidad, Vector2 posicion)
         {
             const float tamano = 45f, gap = 10f, margenMarco = 4f;
@@ -764,7 +1032,6 @@ namespace TanksGame.UI
                 lista[i].color = (i == seleccionado) ? colorSwatchSeleccionado : new Color(0, 0, 0, 0);
         }
 
-        // Pinta cada swatch de un grupo con su color real (usado por "Color" y "Bandera").
         private void AplicarColoresReales(string grupo, Color[] colores)
         {
             if (!contenidoSwatchesPorGrupo.TryGetValue(grupo, out var lista)) return;
@@ -772,7 +1039,6 @@ namespace TanksGame.UI
                 lista[i].color = colores[i];
         }
 
-        // Agrega un texto centrado a cada swatch de un grupo (usado por "Calcomania" y "Numero").
         private void AplicarEtiquetas(string grupo, string[] etiquetas)
         {
             if (!contenidoSwatchesPorGrupo.TryGetValue(grupo, out var lista)) return;
@@ -783,9 +1049,6 @@ namespace TanksGame.UI
             }
         }
 
-        // Regenera los 4 swatches de "Patron" con el color principal actualmente
-        // seleccionado (los patrones son bicolor: una variante oscura y una clara del
-        // mismo color base, no un color fijo aparte).
         private void RegenerarVisualesPatron()
         {
             if (!contenidoSwatchesPorGrupo.TryGetValue("Patron", out var lista)) return;
@@ -796,13 +1059,10 @@ namespace TanksGame.UI
             {
                 lista[i].sprite = GenerarSpritePatron(i, colorBase);
                 lista[i].type = Image.Type.Simple;
-                lista[i].color = Color.white; // El color ya está horneado en la textura.
+                lista[i].color = Color.white;
             }
         }
 
-        // Genera (en runtime, sin ninguna imagen externa) una textura de camuflaje de
-        // 32x32: 0 = sólido, 1 = rayas diagonales, 2 = puntos, 3 = manchas (Perlin noise).
-        // Siempre en 2 tonos derivados de 'colorBase' (uno más oscuro, uno más claro).
         private Sprite GenerarSpritePatron(int patronIndice, Color colorBase)
         {
             const int n = 32;
@@ -822,17 +1082,17 @@ namespace TanksGame.UI
                     bool esClaro;
                     switch (patronIndice)
                     {
-                        case 0: // Sólido.
+                        case 0:
                             esClaro = false;
                             break;
-                        case 1: // Rayas diagonales.
+                        case 1:
                             esClaro = ((x + y) / 4) % 2 == 0;
                             break;
-                        case 2: // Puntos.
+                        case 2:
                             int cx = (x % 8) - 4, cy = (y % 8) - 4;
                             esClaro = (cx * cx + cy * cy) < 6;
                             break;
-                        default: // Manchas tipo camuflaje.
+                        default:
                             esClaro = Mathf.PerlinNoise(x * 0.25f, y * 0.25f) > 0.55f;
                             break;
                     }
@@ -844,30 +1104,60 @@ namespace TanksGame.UI
             return Sprite.Create(textura, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f));
         }
 
-        // Recalcula la vista previa completa (patrón+color, decal, número, bandera) a
-        // partir de 'seleccionActual'. Se llama después de cualquier cambio de swatch.
         private void ActualizarVistaPreviaTanque()
         {
-            if (imagenVistaPreviaTanque == null) return;
-
             int iPatron = seleccionActual.TryGetValue("Patron", out var p) ? p : 0;
             int iColor = seleccionActual.TryGetValue("Color", out var c) ? c : 0;
             int iCalcomania = seleccionActual.TryGetValue("Calcomania", out var d) ? d : 0;
             int iNumero = seleccionActual.TryGetValue("Numero", out var num) ? num : 0;
             int iBandera = seleccionActual.TryGetValue("Bandera", out var b) ? b : 0;
 
-            // Si asignaste un sprite real de vista previa en el Inspector, no lo pisamos
-            // con el patrón generado — se respeta tu arte final por sobre el placeholder.
-            if (spriteVistaPreviaTanque == null)
+            if (imagenCascoTanque != null)
             {
-                imagenVistaPreviaTanque.sprite = GenerarSpritePatron(iPatron, ColoresPrincipales[iColor]);
-                imagenVistaPreviaTanque.type = Image.Type.Simple;
-                imagenVistaPreviaTanque.color = Color.white;
+                var spritePatron = GenerarSpritePatron(iPatron, ColoresPrincipales[iColor]);
+                foreach (var img in new[] { imagenCascoTanque, imagenTorretaTanque, imagenCanonTanque })
+                {
+                    img.sprite = spritePatron;
+                    img.type = Image.Type.Simple;
+                    img.color = Color.white;
+                }
+            }
+            else if (tanquePreviewInstancia != null)
+            {
+                AplicarSkinAlModelo3D(iPatron, iColor);
             }
 
             if (textoDecalPreview != null) textoDecalPreview.text = SimbolosCalcomania[iCalcomania];
             if (textoNumeroPreview != null) textoNumeroPreview.text = NumerosTanque[iNumero];
             if (imagenBanderaPreview != null) imagenBanderaPreview.color = ColoresBandera[iBandera];
+        }
+
+        private void AplicarSkinAlModelo3D(int iPatron, int iColor)
+        {
+            var colorBase = ColoresPrincipales[iColor];
+            var texturaPatron = GenerarSpritePatron(iPatron, colorBase).texture;
+
+            foreach (var renderer in tanquePreviewInstancia.GetComponentsInChildren<Renderer>())
+            {
+                if (DebeExcluirseDeSkin(renderer.gameObject.name)) continue;
+
+                foreach (var material in renderer.materials)
+                {
+                    material.mainTexture = texturaPatron;
+                    material.color = Color.white;
+                }
+            }
+        }
+
+        private bool DebeExcluirseDeSkin(string nombreObjeto)
+        {
+            string nombreMin = nombreObjeto.ToLowerInvariant();
+            foreach (var parte in partesExcluidasDeSkin)
+            {
+                if (!string.IsNullOrWhiteSpace(parte) && nombreMin.Contains(parte.ToLowerInvariant()))
+                    return true;
+            }
+            return false;
         }
 
         // ------------------------------------------------------------------
@@ -1032,7 +1322,12 @@ namespace TanksGame.UI
             string reemplazo = $"{comando}({letra})";
             texto = texto.Remove(indice, longitud).Insert(indice, reemplazo);
             campoEditor.text = texto;
-            ActualizarEditorTrasCambio();
+
+            int nuevaPosicion = indice + reemplazo.Length;
+            campoEditor.caretPosition = nuevaPosicion;
+            ultimaPosicionCursorConocida = nuevaPosicion;
+
+            ActualizarEditorSinMoverCursor();
         }
 
         // ------------------------------------------------------------------
@@ -1128,13 +1423,9 @@ namespace TanksGame.UI
         }
 
         // ------------------------------------------------------------------
-        // DECORACIÓN ESTILO MILITAR — nativa, sin imágenes (brackets tipo HUD,
-        // franjas de acento, viñeta de fondo).
+        // DECORACIÓN ESTILO MILITAR — nativa, sin imágenes.
         // ------------------------------------------------------------------
 
-        // Franja fina horizontal, pegada bajo el título de un panel (estilo "galón").
-        // 'yDesdeArriba' es la distancia en unidades desde arriba del panel (mismo
-        // sistema de coordenadas que CrearTexto/CrearRect).
         private void AgregarFranjaAcento(Transform panel, float yDesdeArriba, float grosor = 3f, float margenLateral = 15f)
         {
             CrearRectElastico(panel, "FranjaAcento",
@@ -1143,9 +1434,6 @@ namespace TanksGame.UI
                 colorAcentoMilitar, null);
         }
 
-        // Agrega 4 "brackets" tipo mira táctica en las esquinas del panel (2 barras
-        // finas en L por esquina). Funciona sin importar el tamaño real del panel,
-        // porque cada bracket se ancla directamente a su propia esquina.
         private void AgregarBracketsDeEsquina(Transform panel, Color color, float tamano = 22f, float grosor = 3f, float margen = 8f)
         {
             AgregarBracketEsquina(panel, new Vector2(0, 0), tamano, grosor, margen, color);
@@ -1180,9 +1468,6 @@ namespace TanksGame.UI
             rect.anchoredPosition = posicion;
         }
 
-        // Viñeta sutil (oscurece las esquinas/bordes de la pantalla) generada en
-        // runtime, como la del degradado de MenuPrincipal — le da un poco de
-        // profundidad al fondo plano sin necesitar ninguna imagen.
         private static Sprite spriteVinetaCache;
 
         private static Sprite ObtenerSpriteVineta()
@@ -1198,11 +1483,11 @@ namespace TanksGame.UI
 
             for (int y = 0; y < n; y++)
             {
-                float v = (y / (float)(n - 1)) * 2f - 1f; // -1..1
+                float v = (y / (float)(n - 1)) * 2f - 1f;
                 for (int x = 0; x < n; x++)
                 {
-                    float u = (x / (float)(n - 1)) * 2f - 1f; // -1..1
-                    float distancia = Mathf.Sqrt(u * u + v * v) / 1.41421f; // 0 en el centro, 1 en la esquina.
+                    float u = (x / (float)(n - 1)) * 2f - 1f;
+                    float distancia = Mathf.Sqrt(u * u + v * v) / 1.41421f;
                     float alfa = Mathf.Clamp01(Mathf.Pow(distancia, 2.2f)) * 0.55f;
                     textura.SetPixel(x, y, new Color(0f, 0f, 0f, alfa));
                 }
@@ -1236,17 +1521,10 @@ namespace TanksGame.UI
             return texto;
         }
 
-        // Editor con: gutter de números de línea a la izquierda, InputField real
-        // (texto invisible, solo para input/cursor) + overlay con colores de sintaxis
-        // encima. Todo dentro de un contenedor que es el que realmente cambia de alto
-        // y el que mueve el ScrollRect — así el gutter y el overlay scrollean en
-        // sincronía con el código.
         private const float ANCHO_NUMEROS_LINEA = 45f;
 
         private InputField CrearCampoTextoMultilineaConScroll(Transform padre, string nombre, string textoInicial, ScrollRect scrollRect)
         {
-            // Contenedor: esto es lo que el ScrollRect mueve. Ancho = 100% del padre,
-            // alto inicial 200 (se recalcula en ActualizarEditorTrasCambio).
             var contenedorGo = new GameObject($"{nombre}_Contenedor");
             contenedorGo.transform.SetParent(padre, false);
             contenedorEditorRect = contenedorGo.AddComponent<RectTransform>();
@@ -1256,7 +1534,6 @@ namespace TanksGame.UI
             contenedorEditorRect.anchoredPosition = Vector2.zero;
             contenedorEditorRect.sizeDelta = new Vector2(0f, 200f);
 
-            // --- Columna de números de línea ---
             var numerosGo = new GameObject("NumerosLinea");
             numerosGo.transform.SetParent(contenedorGo.transform, false);
             textoNumerosLinea = numerosGo.AddComponent<Text>();
@@ -1275,7 +1552,6 @@ namespace TanksGame.UI
             numerosRect.sizeDelta = new Vector2(ANCHO_NUMEROS_LINEA - 10f, 50f);
             numerosRect.anchoredPosition = new Vector2(5f, -5f);
 
-            // Línea vertical fina separando los números del código (como en cualquier IDE).
             var separadorGo = new GameObject("Separador");
             separadorGo.transform.SetParent(contenedorGo.transform, false);
             var separadorImg = separadorGo.AddComponent<Image>();
@@ -1288,10 +1564,6 @@ namespace TanksGame.UI
             separadorRect.sizeDelta = new Vector2(1f, 0f);
             separadorRect.anchoredPosition = new Vector2(ANCHO_NUMEROS_LINEA, 0f);
 
-            // --- InputField real: estirado dentro del contenedor, inset a la derecha
-            // del gutter de números. Al llenar TODO el alto del contenedor (stretch
-            // vertical), no hace falta reajustar su tamaño por separado: crece solo
-            // cuando ActualizarEditorTrasCambio cambia el alto del contenedor. ---
             var go = new GameObject(nombre);
             go.transform.SetParent(contenedorGo.transform, false);
             var rect = go.AddComponent<RectTransform>();
@@ -1300,16 +1572,12 @@ namespace TanksGame.UI
             rect.offsetMin = new Vector2(ANCHO_NUMEROS_LINEA + 5f, 0f);
             rect.offsetMax = Vector2.zero;
 
-            // Texto real del InputField: queda con ALPHA 0 (invisible). Sigue existiendo
-            // y sigue siendo lo que define dónde está el cursor y qué carácter hay en
-            // cada posición — solo que lo que el jugador VE es el overlay de al lado
-            // (textoResaltado), que tiene los colores de sintaxis.
             var textoGo = new GameObject("Texto");
             textoGo.transform.SetParent(go.transform, false);
             var texto = textoGo.AddComponent<Text>();
             texto.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             texto.fontSize = 16;
-            texto.color = new Color(colorTexto.r, colorTexto.g, colorTexto.b, 0f); // Invisible a propósito.
+            texto.color = new Color(colorTexto.r, colorTexto.g, colorTexto.b, 0f);
             texto.alignment = TextAnchor.UpperLeft;
             texto.supportRichText = false;
             texto.horizontalOverflow = HorizontalWrapMode.Wrap;
@@ -1320,10 +1588,6 @@ namespace TanksGame.UI
             textoRect.offsetMin = new Vector2(10, 5);
             textoRect.offsetMax = new Vector2(-10, -5);
 
-            // Overlay con resaltado de sintaxis: mismo tamaño/posición exacta que el
-            // texto real de arriba (mismos offsets), para quedar pixel-alineado. Con
-            // rich text activado y sin capturar clics (raycastTarget=false), así los
-            // clics le siguen llegando al InputField que está debajo.
             var overlayGo = new GameObject("TextoResaltado");
             overlayGo.transform.SetParent(go.transform, false);
             textoResaltado = overlayGo.AddComponent<Text>();
@@ -1348,10 +1612,6 @@ namespace TanksGame.UI
             campo.onBackspacePorLinea = OnBorrarUltimaInstruccion;
             campo.onEnterPorLinea = InsertarNuevaLineaConIndentacion;
 
-            // Cursor bien visible: blanco brillante y un poco más grueso que el default
-            // (antes, sin 'customCaretColor', el cursor podía heredar un color casi
-            // invisible sobre fondo oscuro, o directamente el color transparente del
-            // texto real de arriba).
             campo.customCaretColor = true;
             campo.caretColor = Color.white;
             campo.caretWidth = 2;
@@ -1362,9 +1622,6 @@ namespace TanksGame.UI
             return campo;
         }
 
-        // Subclase de InputField que intercepta Retroceso (Backspace, borra la línea
-        // completa) y Enter (inserta salto de línea CON indentación automática), en
-        // vez del comportamiento normal carácter-por-carácter de un InputField.
         private class InputFieldPorLinea : InputField
         {
             public System.Action onBackspacePorLinea;
@@ -1558,8 +1815,17 @@ namespace TanksGame.UI
             ActualizarTextoEstado("LISTO", esError: false);
         }
 
-        private void OnIniciarEjecucion()
+        // Valida el script del tanque actual y lo agrega al Historial como
+        // "Tanque N". El editor se limpia SIEMPRE después de un guardado exitoso,
+        // para seguir directo con el próximo tanque sin necesitar un botón aparte.
+        private void OnGuardarScriptDelTanque()
         {
+            if (scriptsPorTanque.Count >= cantidadMaximaTanques)
+            {
+                ActualizarTextoEstado($"Ya programaste el máximo de {cantidadMaximaTanques} tanques", esError: true);
+                return;
+            }
+
             string texto = campoEditor.text;
 
             if (string.IsNullOrWhiteSpace(texto))
@@ -1578,21 +1844,58 @@ namespace TanksGame.UI
                 return;
             }
 
-            UltimoScriptValidado = texto;
+            int tanquesProgramados = scriptsPorTanque.Count + 1;
+            string nombreTanque = $"Tanque {tanquesProgramados}";
 
-            string nombre = string.IsNullOrEmpty(nombreArchivoActual)
-                ? $"script_{DateTime.Now:HHmmss}"
-                : nombreArchivoActual;
             var entrada = new EntradaHistorial
             {
-                nombre = nombre,
+                nombre = nombreTanque,
                 fechaHora = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
                 contenido = texto
             };
             historial.Add(entrada);
             ReconstruirListaHistorial();
 
-            ActualizarTextoEstado($"Ejecutado \"{nombre}\" correctamente", esError: false);
+            scriptsPorTanque.Add(texto);
+            ActualizarTamanoMinimoTablero(tanquesProgramados);
+
+            campoEditor.text = "";
+            ActualizarEditorTrasCambio();
+
+            if (tanquesProgramados < cantidadMinimaTanquesParaJugar)
+            {
+                int siguienteTanque = tanquesProgramados + 1;
+                ActualizarTextoEstado(
+                    $"{nombreTanque} guardado. Debes programar el Tanque {siguienteTanque} (mínimo {cantidadMinimaTanquesParaJugar} tanques para jugar)",
+                    esError: false);
+            }
+            else if (tanquesProgramados >= cantidadMaximaTanques)
+            {
+                ActualizarTextoEstado($"{nombreTanque} guardado. Alcanzaste el máximo de {cantidadMaximaTanques} tanques.", esError: false);
+            }
+            else
+            {
+                ActualizarTextoEstado($"{nombreTanque} guardado. Podés seguir programando otro tanque o iniciar la partida.", esError: false);
+            }
+
+            ActualizarBotonEliminarScript();
+        }
+
+        private void OnIniciarPartida()
+        {
+            if (scriptsPorTanque.Count < cantidadMinimaTanquesParaJugar)
+            {
+                ActualizarTextoEstado(
+                    $"Debes programar al menos {cantidadMinimaTanquesParaJugar} tanques antes de iniciar la partida",
+                    esError: true);
+                return;
+            }
+
+            ScriptsTanquesPartida = new List<string>(scriptsPorTanque);
+
+            ActualizarTextoEstado(
+                $"Partida iniciada con {scriptsPorTanque.Count} tanques (tablero {tamanoTablero}x{tamanoTablero})",
+                esError: false);
         }
 
         private void OnLimpiarHistorial()
@@ -1609,9 +1912,73 @@ namespace TanksGame.UI
             ActualizarTextoEstado($"Cargado del historial: \"{entrada.nombre}\"", esError: false);
         }
 
-        // Las flechas < > de Vista Previa avanzan las 5 categorías a la vez (un
-        // "siguiente conjunto" rápido), en vez de una sola. Sirve para recorrer
-        // combinaciones rápido sin tener que tocar cada swatch por separado.
+        // ------------------------------------------------------------------
+        // ELIMINAR SCRIPT DE TANQUE / TAMAÑO DE TABLERO.
+        // ------------------------------------------------------------------
+
+        // Botón visible en cuanto hay al menos 1 tanque guardado. Al tocarlo, alterna
+        // un modo donde cada fila del Historial muestra un "-" para borrar ese tanque
+        // en particular (ver CrearItemHistorial / OnEliminarTanque).
+        private void ActualizarBotonEliminarScript()
+        {
+            if (botonEliminarScriptRef == null) return;
+
+            bool hayTanques = scriptsPorTanque.Count > 0;
+            botonEliminarScriptRef.gameObject.SetActive(hayTanques);
+
+            if (!hayTanques) modoEliminarActivo = false;
+
+            textoBotonEliminarScript.text = modoEliminarActivo ? "LISTO" : "ELIMINAR SCRIPT DE TANQUE";
+        }
+
+        private void OnAlternarModoEliminar()
+        {
+            modoEliminarActivo = !modoEliminarActivo;
+            ActualizarBotonEliminarScript();
+            ReconstruirListaHistorial();
+        }
+
+        // Borra un tanque puntual: lo saca del Historial Y de la lista de scripts que
+        // realmente cuentan como "programados" (scriptsPorTanque), buscándolo por el
+        // contenido exacto del script.
+        private void OnEliminarTanque(EntradaHistorial entrada)
+        {
+            historial.Remove(entrada);
+            scriptsPorTanque.Remove(entrada.contenido);
+
+            ReconstruirListaHistorial();
+            ActualizarBotonEliminarScript();
+            ActualizarTamanoMinimoTablero(scriptsPorTanque.Count);
+            ActualizarTextoEstado($"\"{entrada.nombre}\" eliminado ({scriptsPorTanque.Count} tanques programados)", esError: false);
+        }
+
+        private int ObtenerTamanoMinimoTablero()
+        {
+            int tanquesDeReferencia = Mathf.Max(scriptsPorTanque.Count, cantidadMinimaTanquesParaJugar);
+            return Mathf.Min(tanquesDeReferencia + 1, TAMANO_TABLERO_MAXIMO);
+        }
+
+        private void ActualizarTamanoMinimoTablero(int tanquesProgramados)
+        {
+            int minimo = ObtenerTamanoMinimoTablero();
+            if (tamanoTablero < minimo)
+                tamanoTablero = minimo;
+            ActualizarTextoTamanoTablero();
+        }
+
+        private void ActualizarTextoTamanoTablero()
+        {
+            if (textoTamanoTablero != null)
+                textoTamanoTablero.text = $"{tamanoTablero} x {tamanoTablero}";
+        }
+
+        private void CambiarTamanoTablero(int delta)
+        {
+            int minimo = ObtenerTamanoMinimoTablero();
+            tamanoTablero = Mathf.Clamp(tamanoTablero + delta, minimo, TAMANO_TABLERO_MAXIMO);
+            ActualizarTextoTamanoTablero();
+        }
+
         private static readonly (string grupo, int cantidad)[] CategoriasSkin =
         {
             ("Patron", 4), ("Color", 4), ("Calcomania", 4), ("Numero", 4), ("Bandera", 5)
@@ -1636,8 +2003,6 @@ namespace TanksGame.UI
             seleccionActual[grupo] = indice;
             ResaltarSeleccion(grupo);
 
-            // El patrón se pinta con el color principal, así que si lo que cambió fue
-            // justo el color, hay que regenerar las 4 texturas de patrón también.
             if (grupo == "Color") RegenerarVisualesPatron();
 
             ActualizarVistaPreviaTanque();

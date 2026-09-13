@@ -2270,3 +2270,425 @@
 [2026-09-07T01:44:52.790Z] [DEBUG] log Relay->Editor communication is unblocked
 [2026-09-07T01:44:52.790Z] [INFO] log Unity client connected with ID: editor-1360-cgjcb0 (relay 1.0.12-build.97)
 [2026-09-07T01:44:52.792Z] [INFO] connection.established clientId=editor-1360-cgjcb0 port=9001
+[2026-09-07T23:38:57.012Z] [INFO] relay.startup port=9001 mcpClientPort=9002 editorPid=20228
+[2026-09-07T23:38:57.015Z] [INFO] log === RELAY SERVER STARTED === (unity-ai-relay v1.0.12-build.97)
+[2026-09-07T23:38:57.018Z] [INFO] log Initializing relay components...
+[2026-09-07T23:38:57.017Z] [INFO] log Parsed config: {"port":9001,"mcpClientPort":9002,"editorPid":"20228","shutdownDelaySeconds":180}
+[2026-09-07T23:38:57.017Z] [INFO] log Command line arguments: ["bun","B:/~BUN/root/relay_win.exe","--relay","--port","9001","--mcp-client-port","9002","--editor-pid","20228","--shutdown-delay","180","--log-dir","D:\\aestradam014\\Clash of Tanks\\Logs"]
+[2026-09-07T23:38:57.015Z] [INFO] log Starting relay server...
+[2026-09-07T23:38:57.019Z] [INFO] log Creating RelayEditor...
+[2026-09-07T23:38:57.042Z] [INFO] log WebSocket server started
+[2026-09-07T23:38:57.043Z] [INFO] log MCP Client initialized at port: 9002
+[2026-09-07T23:38:57.043Z] [INFO] log Relay server initialization completed
+[2026-09-07T23:38:57.062Z] [WARN] log [shell-env] Shell environment did not contain a PATH variable
+[2026-09-07T23:38:57.088Z] [INFO] log Unity MCP Relay server started | Port: 9002 | Endpoints: /mcp/start-server, /mcp/stop-server, /mcp/server-status, /mcp/call-tool
+[2026-09-07T23:38:57.442Z] [INFO] log Unity client connected with ID: editor-20228-gtzfvm (relay 1.0.12-build.97)
+[2026-09-07T23:38:57.443Z] [INFO] connection.established clientId=editor-20228-gtzfvm port=9001
+[2026-09-07T23:39:53.787Z] [INFO] log Domain reload signal received from client editor-20228-gtzfvm
+[2026-09-07T23:39:53.788Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:39:53.790Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:39:57.018Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:39:57.020Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-07T23:39:57.019Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:39:57.020Z] [WARN] connection.lost clientId=null
+[2026-09-07T23:39:57.021Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-07T23:39:57.021Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-07T23:40:40.712Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-07T23:40:40.712Z] [INFO] log Unity client connected with ID: editor-20228-oosnfw (relay 1.0.12-build.97)
+[2026-09-07T23:40:40.715Z] [INFO] connection.established clientId=editor-20228-oosnfw port=9001
+[2026-09-07T23:40:47.107Z] [INFO] log Domain reload signal received from client editor-20228-oosnfw
+[2026-09-07T23:40:47.108Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:40:47.108Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:40:48.056Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:40:48.056Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:40:48.058Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-07T23:40:48.058Z] [WARN] connection.lost clientId=null
+[2026-09-07T23:40:48.059Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-07T23:40:48.060Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-07T23:43:48.070Z] [INFO] log Auto-shutdown timer fired after 180s inactivity, shutting down: Dedicated client disconnected
+[2026-09-07T23:43:48.071Z] [INFO] log Shutdown: Initiating graceful shutdown: Dedicated client disconnected
+[2026-09-07T23:44:54.447Z] [INFO] relay.startup port=9001 mcpClientPort=9002 editorPid=20228
+[2026-09-07T23:44:54.449Z] [INFO] log === RELAY SERVER STARTED === (unity-ai-relay v1.0.12-build.97)
+[2026-09-07T23:44:54.449Z] [INFO] log Starting relay server...
+[2026-09-07T23:44:54.450Z] [INFO] log Command line arguments: ["bun","B:/~BUN/root/relay_win.exe","--relay","--port","9001","--mcp-client-port","9002","--editor-pid","20228","--shutdown-delay","180","--log-dir","D:\\aestradam014\\Clash of Tanks\\Logs"]
+[2026-09-07T23:44:54.450Z] [INFO] log Parsed config: {"port":9001,"mcpClientPort":9002,"editorPid":"20228","shutdownDelaySeconds":180}
+[2026-09-07T23:44:54.451Z] [INFO] log Initializing relay components...
+[2026-09-07T23:44:54.451Z] [INFO] log Creating RelayEditor...
+[2026-09-07T23:44:54.460Z] [INFO] log WebSocket server started
+[2026-09-07T23:44:54.461Z] [INFO] log Relay server initialization completed
+[2026-09-07T23:44:54.462Z] [INFO] log MCP Client initialized at port: 9002
+[2026-09-07T23:44:54.479Z] [WARN] log [shell-env] Shell environment did not contain a PATH variable
+[2026-09-07T23:44:54.516Z] [INFO] log Unity MCP Relay server started | Port: 9002 | Endpoints: /mcp/start-server, /mcp/stop-server, /mcp/server-status, /mcp/call-tool
+[2026-09-07T23:44:54.847Z] [INFO] log Unity client connected with ID: editor-20228-mhucsr (relay 1.0.12-build.97)
+[2026-09-07T23:44:54.848Z] [INFO] connection.established clientId=editor-20228-mhucsr port=9001
+[2026-09-07T23:45:21.071Z] [INFO] log Domain reload signal received from client editor-20228-mhucsr
+[2026-09-07T23:45:21.072Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:45:21.072Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:45:21.844Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:45:21.844Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:45:21.846Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-07T23:45:21.846Z] [WARN] connection.lost clientId=null
+[2026-09-07T23:45:21.846Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-07T23:45:21.847Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-07T23:45:31.161Z] [INFO] log Unity client connected with ID: editor-20228-j5yt21 (relay 1.0.12-build.97)
+[2026-09-07T23:45:31.160Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-07T23:45:31.161Z] [INFO] connection.established clientId=editor-20228-j5yt21 port=9001
+[2026-09-07T23:46:56.065Z] [INFO] log Domain reload signal received from client editor-20228-j5yt21
+[2026-09-07T23:46:56.066Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:46:56.066Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:46:56.818Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-07T23:46:56.818Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-07T23:46:56.819Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-07T23:46:56.819Z] [WARN] connection.lost clientId=null
+[2026-09-07T23:46:56.820Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-07T23:46:56.821Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-07T23:47:05.427Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-07T23:47:05.428Z] [INFO] log Unity client connected with ID: editor-20228-2pcwx9 (relay 1.0.12-build.97)
+[2026-09-07T23:47:05.429Z] [INFO] connection.established clientId=editor-20228-2pcwx9 port=9001
+[2026-09-07T23:58:53.473Z] [INFO] log Shutdown request received from client editor-20228-2pcwx9
+[2026-09-07T23:58:53.476Z] [INFO] log Unity client requested immediate shutdown - shutting down now, reason: Shutdown requested by client
+[2026-09-07T23:58:53.477Z] [INFO] log Shutdown: Initiating graceful shutdown: Shutdown requested by client
+[2026-09-09T02:42:40.815Z] [INFO] relay.startup port=9001 mcpClientPort=9002 editorPid=24924
+[2026-09-09T02:42:40.825Z] [INFO] log Creating RelayEditor...
+[2026-09-09T02:42:40.825Z] [INFO] log Initializing relay components...
+[2026-09-09T02:42:40.824Z] [INFO] log Parsed config: {"port":9001,"mcpClientPort":9002,"editorPid":"24924","shutdownDelaySeconds":180}
+[2026-09-09T02:42:40.824Z] [INFO] log Command line arguments: ["bun","B:/~BUN/root/relay_win.exe","--relay","--port","9001","--mcp-client-port","9002","--editor-pid","24924","--shutdown-delay","180","--log-dir","D:\\aestradam014\\Clash of Tanks\\Logs"]
+[2026-09-09T02:42:40.823Z] [INFO] log Starting relay server...
+[2026-09-09T02:42:40.823Z] [INFO] log === RELAY SERVER STARTED === (unity-ai-relay v1.0.12-build.97)
+[2026-09-09T02:42:40.866Z] [INFO] log WebSocket server started
+[2026-09-09T02:42:40.866Z] [INFO] log Relay server initialization completed
+[2026-09-09T02:42:40.867Z] [INFO] log MCP Client initialized at port: 9002
+[2026-09-09T02:42:40.878Z] [WARN] log [shell-env] Shell environment did not contain a PATH variable
+[2026-09-09T02:42:40.920Z] [INFO] log Unity MCP Relay server started | Port: 9002 | Endpoints: /mcp/start-server, /mcp/stop-server, /mcp/server-status, /mcp/call-tool
+[2026-09-09T02:42:41.344Z] [INFO] log Unity client connected with ID: editor-24924-t6youf (relay 1.0.12-build.97)
+[2026-09-09T02:42:41.345Z] [INFO] connection.established clientId=editor-24924-t6youf port=9001
+[2026-09-09T02:43:26.781Z] [INFO] log Domain reload signal received from client editor-24924-t6youf
+[2026-09-09T02:43:26.782Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T02:43:26.798Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T02:43:27.843Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T02:43:27.844Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T02:43:27.846Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-09T02:43:27.847Z] [WARN] connection.lost clientId=null
+[2026-09-09T02:43:27.848Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-09T02:43:27.848Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-09T02:43:42.132Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-09T02:43:42.133Z] [INFO] log Unity client connected with ID: editor-24924-lglm5w (relay 1.0.12-build.97)
+[2026-09-09T02:43:42.152Z] [INFO] connection.established clientId=editor-24924-lglm5w port=9001
+[2026-09-09T02:45:47.135Z] [INFO] log Domain reload signal received from client editor-24924-lglm5w
+[2026-09-09T02:45:47.136Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T02:45:47.136Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T02:45:47.815Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T02:45:47.815Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T02:45:47.816Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-09T02:45:47.817Z] [WARN] connection.lost clientId=null
+[2026-09-09T02:45:47.818Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-09T02:45:47.817Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-09T02:45:56.782Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-09T02:45:56.782Z] [INFO] log Unity client connected with ID: editor-24924-me2dol (relay 1.0.12-build.97)
+[2026-09-09T02:45:56.782Z] [INFO] connection.established clientId=editor-24924-me2dol port=9001
+[2026-09-09T03:08:22.309Z] [INFO] log Domain reload signal received from client editor-24924-me2dol
+[2026-09-09T03:08:22.311Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T03:08:22.312Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T03:08:23.337Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T03:08:23.337Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T03:08:23.338Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-09T03:08:23.338Z] [WARN] connection.lost clientId=null
+[2026-09-09T03:08:23.339Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-09T03:08:23.341Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-09T03:08:30.054Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-09T03:08:30.055Z] [INFO] log Unity client connected with ID: editor-24924-d4blzu (relay 1.0.12-build.97)
+[2026-09-09T03:08:30.057Z] [INFO] connection.established clientId=editor-24924-d4blzu port=9001
+[2026-09-09T03:10:15.834Z] [INFO] log Shutdown request received from client editor-24924-d4blzu
+[2026-09-09T03:10:15.834Z] [INFO] log Unity client requested immediate shutdown - shutting down now, reason: Shutdown requested by client
+[2026-09-09T03:10:15.836Z] [INFO] log Shutdown: Initiating graceful shutdown: Shutdown requested by client
+[2026-09-09T03:11:35.244Z] [INFO] relay.startup port=9001 mcpClientPort=9002 editorPid=24704
+[2026-09-09T03:11:35.246Z] [INFO] log === RELAY SERVER STARTED === (unity-ai-relay v1.0.12-build.97)
+[2026-09-09T03:11:35.247Z] [INFO] log Parsed config: {"port":9001,"mcpClientPort":9002,"editorPid":"24704","shutdownDelaySeconds":180}
+[2026-09-09T03:11:35.247Z] [INFO] log Command line arguments: ["bun","B:/~BUN/root/relay_win.exe","--relay","--port","9001","--mcp-client-port","9002","--editor-pid","24704","--shutdown-delay","180","--log-dir","D:\\aestradam014\\Clash of Tanks\\Logs"]
+[2026-09-09T03:11:35.247Z] [INFO] log Starting relay server...
+[2026-09-09T03:11:35.260Z] [INFO] log Initializing relay components...
+[2026-09-09T03:11:35.261Z] [INFO] log Creating RelayEditor...
+[2026-09-09T03:11:35.278Z] [INFO] log MCP Client initialized at port: 9002
+[2026-09-09T03:11:35.277Z] [INFO] log WebSocket server started
+[2026-09-09T03:11:35.277Z] [INFO] log Relay server initialization completed
+[2026-09-09T03:11:35.286Z] [WARN] log [shell-env] Shell environment did not contain a PATH variable
+[2026-09-09T03:11:35.335Z] [INFO] log Unity MCP Relay server started | Port: 9002 | Endpoints: /mcp/start-server, /mcp/stop-server, /mcp/server-status, /mcp/call-tool
+[2026-09-09T03:11:35.698Z] [INFO] log Unity client connected with ID: editor-24704-yqv5fz (relay 1.0.12-build.97)
+[2026-09-09T03:11:35.698Z] [INFO] connection.established clientId=editor-24704-yqv5fz port=9001
+[2026-09-09T03:11:56.890Z] [INFO] log Domain reload signal received from client editor-24704-yqv5fz
+[2026-09-09T03:11:56.891Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T03:11:56.891Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T03:11:57.629Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-09T03:11:57.630Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-09T03:11:57.630Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-09T03:11:57.631Z] [WARN] connection.lost clientId=null
+[2026-09-09T03:11:57.632Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-09T03:11:57.632Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-09T03:12:09.802Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-09T03:12:09.803Z] [INFO] log Unity client connected with ID: editor-24704-gk1otk (relay 1.0.12-build.97)
+[2026-09-09T03:12:09.803Z] [INFO] connection.established clientId=editor-24704-gk1otk port=9001
+[2026-09-09T03:27:04.689Z] [INFO] log Shutdown request received from client editor-24704-gk1otk
+[2026-09-09T03:27:04.691Z] [INFO] log Unity client requested immediate shutdown - shutting down now, reason: Shutdown requested by client
+[2026-09-09T03:27:04.692Z] [INFO] log Shutdown: Initiating graceful shutdown: Shutdown requested by client
+[2026-09-12T00:39:33.923Z] [INFO] relay.startup port=9001 mcpClientPort=9002 editorPid=12560
+[2026-09-12T00:39:33.937Z] [INFO] log Creating RelayEditor...
+[2026-09-12T00:39:33.935Z] [INFO] log Starting relay server...
+[2026-09-12T00:39:33.935Z] [INFO] log Command line arguments: ["bun","B:/~BUN/root/relay_win.exe","--relay","--port","9001","--mcp-client-port","9002","--editor-pid","12560","--shutdown-delay","180","--log-dir","D:\\aestradam014\\Clash of Tanks\\Logs"]
+[2026-09-12T00:39:33.935Z] [INFO] log === RELAY SERVER STARTED === (unity-ai-relay v1.0.12-build.97)
+[2026-09-12T00:39:33.935Z] [INFO] log Parsed config: {"port":9001,"mcpClientPort":9002,"editorPid":"12560","shutdownDelaySeconds":180}
+[2026-09-12T00:39:33.936Z] [INFO] log Initializing relay components...
+[2026-09-12T00:39:34.003Z] [INFO] log WebSocket server started
+[2026-09-12T00:39:34.003Z] [INFO] log Relay server initialization completed
+[2026-09-12T00:39:34.004Z] [INFO] log MCP Client initialized at port: 9002
+[2026-09-12T00:39:34.025Z] [WARN] log [shell-env] Shell environment did not contain a PATH variable
+[2026-09-12T00:39:34.069Z] [INFO] log Unity MCP Relay server started | Port: 9002 | Endpoints: /mcp/start-server, /mcp/stop-server, /mcp/server-status, /mcp/call-tool
+[2026-09-12T00:39:34.097Z] [INFO] log Unity client connected with ID: editor-12560-ldh9ax (relay 1.0.12-build.97)
+[2026-09-12T00:39:34.097Z] [INFO] connection.established clientId=editor-12560-ldh9ax port=9001
+[2026-09-12T00:43:27.928Z] [INFO] log Domain reload signal received from client editor-12560-ldh9ax
+[2026-09-12T00:43:27.929Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:43:27.930Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:43:28.667Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:43:28.668Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:43:28.670Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T00:43:28.670Z] [WARN] connection.lost clientId=null
+[2026-09-12T00:43:28.670Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T00:43:28.671Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T00:43:41.259Z] [INFO] log Unity client connected with ID: editor-12560-rx1bpd (relay 1.0.12-build.97)
+[2026-09-12T00:43:41.259Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T00:43:41.260Z] [INFO] connection.established clientId=editor-12560-rx1bpd port=9001
+[2026-09-12T00:46:41.924Z] [INFO] log Domain reload signal received from client editor-12560-rx1bpd
+[2026-09-12T00:46:41.924Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:46:41.925Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:46:42.610Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:46:42.611Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:46:42.612Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T00:46:42.612Z] [WARN] connection.lost clientId=null
+[2026-09-12T00:46:42.614Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T00:46:42.615Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T00:46:50.878Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T00:46:50.879Z] [INFO] log Unity client connected with ID: editor-12560-vz0g0e (relay 1.0.12-build.97)
+[2026-09-12T00:46:50.879Z] [INFO] connection.established clientId=editor-12560-vz0g0e port=9001
+[2026-09-12T00:54:27.334Z] [INFO] log Domain reload signal received from client editor-12560-vz0g0e
+[2026-09-12T00:54:27.336Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:54:27.337Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:54:28.335Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:54:28.335Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:54:28.336Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T00:54:28.337Z] [WARN] connection.lost clientId=null
+[2026-09-12T00:54:28.338Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T00:54:28.344Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T00:55:18.084Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T00:55:18.085Z] [INFO] log Unity client connected with ID: editor-12560-8v7tmx (relay 1.0.12-build.97)
+[2026-09-12T00:55:18.088Z] [INFO] connection.established clientId=editor-12560-8v7tmx port=9001
+[2026-09-12T00:55:19.677Z] [INFO] log Domain reload signal received from client editor-12560-8v7tmx
+[2026-09-12T00:55:19.678Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:55:19.678Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:55:20.706Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:55:20.706Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T00:55:20.707Z] [WARN] connection.lost clientId=null
+[2026-09-12T00:55:20.707Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T00:55:20.707Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T00:55:20.706Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:55:29.305Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T00:55:29.305Z] [INFO] log Unity client connected with ID: editor-12560-4pijdt (relay 1.0.12-build.97)
+[2026-09-12T00:55:29.308Z] [INFO] connection.established clientId=editor-12560-4pijdt port=9001
+[2026-09-12T00:59:27.410Z] [INFO] log Domain reload signal received from client editor-12560-4pijdt
+[2026-09-12T00:59:27.410Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:59:27.411Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:59:28.358Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:59:28.359Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:59:28.360Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T00:59:28.361Z] [WARN] connection.lost clientId=null
+[2026-09-12T00:59:28.362Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T00:59:28.363Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T00:59:35.342Z] [INFO] log Unity client connected with ID: editor-12560-0sml5g (relay 1.0.12-build.97)
+[2026-09-12T00:59:35.342Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T00:59:35.344Z] [INFO] connection.established clientId=editor-12560-0sml5g port=9001
+[2026-09-12T00:59:53.714Z] [INFO] log Domain reload signal received from client editor-12560-0sml5g
+[2026-09-12T00:59:53.715Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:59:53.716Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:59:54.492Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T00:59:54.492Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T00:59:54.494Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T00:59:54.494Z] [WARN] connection.lost clientId=null
+[2026-09-12T00:59:54.495Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T00:59:54.496Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T01:00:03.288Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T01:00:03.288Z] [INFO] log Unity client connected with ID: editor-12560-vz5577 (relay 1.0.12-build.97)
+[2026-09-12T01:00:03.289Z] [INFO] connection.established clientId=editor-12560-vz5577 port=9001
+[2026-09-12T01:00:53.186Z] [INFO] log Domain reload signal received from client editor-12560-vz5577
+[2026-09-12T01:00:53.186Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:00:53.188Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:00:53.889Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:00:53.890Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:00:53.890Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T01:00:53.891Z] [WARN] connection.lost clientId=null
+[2026-09-12T01:00:53.892Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T01:00:53.892Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T01:01:02.133Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T01:01:02.134Z] [INFO] connection.established clientId=editor-12560-bvdtnt port=9001
+[2026-09-12T01:01:02.134Z] [INFO] log Unity client connected with ID: editor-12560-bvdtnt (relay 1.0.12-build.97)
+[2026-09-12T01:10:01.459Z] [INFO] log Domain reload signal received from client editor-12560-bvdtnt
+[2026-09-12T01:10:01.459Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:10:01.461Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:10:02.516Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:10:02.517Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:10:02.517Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T01:10:02.517Z] [WARN] connection.lost clientId=null
+[2026-09-12T01:10:02.518Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T01:10:02.518Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T01:10:09.629Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T01:10:09.632Z] [INFO] log Unity client connected with ID: editor-12560-3ii71s (relay 1.0.12-build.97)
+[2026-09-12T01:10:09.635Z] [INFO] connection.established clientId=editor-12560-3ii71s port=9001
+[2026-09-12T01:10:17.351Z] [INFO] log Domain reload signal received from client editor-12560-3ii71s
+[2026-09-12T01:10:17.352Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:10:17.353Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:10:18.062Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:10:18.062Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:10:18.063Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T01:10:18.064Z] [WARN] connection.lost clientId=null
+[2026-09-12T01:10:18.065Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T01:10:18.065Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T01:10:26.464Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T01:10:26.465Z] [INFO] log Unity client connected with ID: editor-12560-cwjesg (relay 1.0.12-build.97)
+[2026-09-12T01:10:26.465Z] [INFO] connection.established clientId=editor-12560-cwjesg port=9001
+[2026-09-12T01:12:34.555Z] [INFO] log Domain reload signal received from client editor-12560-cwjesg
+[2026-09-12T01:12:34.556Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:12:34.556Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:12:36.301Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:12:36.302Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:12:36.303Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T01:12:36.303Z] [WARN] connection.lost clientId=null
+[2026-09-12T01:12:36.304Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T01:12:36.304Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T01:12:43.266Z] [INFO] connection.established clientId=editor-12560-vdeavc port=9001
+[2026-09-12T01:12:43.265Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T01:12:43.266Z] [INFO] log Unity client connected with ID: editor-12560-vdeavc (relay 1.0.12-build.97)
+[2026-09-12T01:13:57.927Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:13:57.927Z] [INFO] log Domain reload signal received from client editor-12560-vdeavc
+[2026-09-12T01:13:57.927Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:13:58.651Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T01:13:58.651Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T01:13:58.652Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T01:13:58.652Z] [WARN] connection.lost clientId=null
+[2026-09-12T01:13:58.653Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T01:13:58.654Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T01:14:07.154Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T01:14:07.155Z] [INFO] log Unity client connected with ID: editor-12560-g4s8u5 (relay 1.0.12-build.97)
+[2026-09-12T01:14:07.156Z] [INFO] connection.established clientId=editor-12560-g4s8u5 port=9001
+[2026-09-12T02:13:01.717Z] [INFO] log Domain reload signal received from client editor-12560-g4s8u5
+[2026-09-12T02:13:01.723Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T02:13:01.724Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T02:13:02.892Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T02:13:02.892Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T02:13:02.893Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T02:13:02.895Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T02:13:02.894Z] [WARN] connection.lost clientId=null
+[2026-09-12T02:13:02.896Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T02:13:09.750Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T02:13:09.750Z] [INFO] log Unity client connected with ID: editor-12560-kvepid (relay 1.0.12-build.97)
+[2026-09-12T02:13:09.750Z] [INFO] connection.established clientId=editor-12560-kvepid port=9001
+[2026-09-12T02:13:12.916Z] [INFO] log Domain reload signal received from client editor-12560-kvepid
+[2026-09-12T02:13:12.916Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T02:13:12.917Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T02:13:13.740Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T02:13:13.741Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T02:13:13.742Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T02:13:13.742Z] [WARN] connection.lost clientId=null
+[2026-09-12T02:13:13.749Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T02:13:13.751Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T02:13:22.495Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T02:13:22.496Z] [INFO] log Unity client connected with ID: editor-12560-tgr7h6 (relay 1.0.12-build.97)
+[2026-09-12T02:13:22.496Z] [INFO] connection.established clientId=editor-12560-tgr7h6 port=9001
+[2026-09-12T03:11:23.475Z] [INFO] log Shutdown request received from client editor-12560-tgr7h6
+[2026-09-12T03:11:23.475Z] [INFO] log Unity client requested immediate shutdown - shutting down now, reason: Shutdown requested by client
+[2026-09-12T03:11:23.475Z] [INFO] log Shutdown: Initiating graceful shutdown: Shutdown requested by client
+[2026-09-12T21:24:37.754Z] [INFO] relay.startup port=9001 mcpClientPort=9002 editorPid=3936
+[2026-09-12T21:24:37.762Z] [INFO] log Creating RelayEditor...
+[2026-09-12T21:24:37.762Z] [INFO] log Initializing relay components...
+[2026-09-12T21:24:37.761Z] [INFO] log Parsed config: {"port":9001,"mcpClientPort":9002,"editorPid":"3936","shutdownDelaySeconds":180}
+[2026-09-12T21:24:37.760Z] [INFO] log Command line arguments: ["bun","B:/~BUN/root/relay_win.exe","--relay","--port","9001","--mcp-client-port","9002","--editor-pid","3936","--shutdown-delay","180","--log-dir","D:\\aestradam014\\Clash of Tanks\\Logs"]
+[2026-09-12T21:24:37.760Z] [INFO] log Starting relay server...
+[2026-09-12T21:24:37.760Z] [INFO] log === RELAY SERVER STARTED === (unity-ai-relay v1.0.12-build.97)
+[2026-09-12T21:24:37.808Z] [INFO] log WebSocket server started
+[2026-09-12T21:24:37.809Z] [INFO] log Relay server initialization completed
+[2026-09-12T21:24:37.809Z] [INFO] log MCP Client initialized at port: 9002
+[2026-09-12T21:24:37.838Z] [WARN] log [shell-env] Shell environment did not contain a PATH variable
+[2026-09-12T21:24:37.865Z] [INFO] log Unity MCP Relay server started | Port: 9002 | Endpoints: /mcp/start-server, /mcp/stop-server, /mcp/server-status, /mcp/call-tool
+[2026-09-12T21:24:38.231Z] [INFO] log Unity client connected with ID: editor-3936-1ww6yf (relay 1.0.12-build.97)
+[2026-09-12T21:24:38.232Z] [INFO] connection.established clientId=editor-3936-1ww6yf port=9001
+[2026-09-12T21:45:30.758Z] [INFO] log Domain reload signal received from client editor-3936-1ww6yf
+[2026-09-12T21:45:30.759Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T21:45:30.762Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T21:45:32.169Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T21:45:32.171Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T21:45:32.170Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T21:45:32.171Z] [WARN] connection.lost clientId=null
+[2026-09-12T21:45:32.173Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T21:45:32.172Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T21:45:40.019Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T21:45:40.020Z] [INFO] log Unity client connected with ID: editor-3936-15gxfb (relay 1.0.12-build.97)
+[2026-09-12T21:45:40.026Z] [INFO] connection.established clientId=editor-3936-15gxfb port=9001
+[2026-09-12T21:58:54.911Z] [INFO] log Domain reload signal received from client editor-3936-15gxfb
+[2026-09-12T21:58:54.913Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T21:58:54.914Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T21:58:55.898Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T21:58:55.899Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T21:58:55.899Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T21:58:55.900Z] [WARN] connection.lost clientId=null
+[2026-09-12T21:58:55.901Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T21:58:55.902Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T21:59:05.192Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T21:59:05.192Z] [INFO] log Unity client connected with ID: editor-3936-qh6hlm (relay 1.0.12-build.97)
+[2026-09-12T21:59:05.193Z] [INFO] connection.established clientId=editor-3936-qh6hlm port=9001
+[2026-09-12T22:00:43.545Z] [INFO] log Domain reload signal received from client editor-3936-qh6hlm
+[2026-09-12T22:00:43.550Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:00:43.548Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:00:44.516Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:00:44.516Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:00:44.516Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T22:00:44.517Z] [WARN] connection.lost clientId=null
+[2026-09-12T22:00:44.517Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T22:00:44.518Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T22:00:51.724Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T22:00:51.724Z] [INFO] log Unity client connected with ID: editor-3936-oenmea (relay 1.0.12-build.97)
+[2026-09-12T22:00:51.726Z] [INFO] connection.established clientId=editor-3936-oenmea port=9001
+[2026-09-12T22:01:16.910Z] [INFO] log Domain reload signal received from client editor-3936-oenmea
+[2026-09-12T22:01:16.911Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:01:16.912Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:01:17.631Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:01:17.634Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T22:01:17.631Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:01:17.633Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T22:01:17.633Z] [WARN] connection.lost clientId=null
+[2026-09-12T22:01:17.634Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T22:01:25.915Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T22:01:25.915Z] [INFO] log Unity client connected with ID: editor-3936-hdxhk7 (relay 1.0.12-build.97)
+[2026-09-12T22:01:25.916Z] [INFO] connection.established clientId=editor-3936-hdxhk7 port=9001
+[2026-09-12T22:28:26.725Z] [INFO] log Domain reload signal received from client editor-3936-hdxhk7
+[2026-09-12T22:28:26.727Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:28:26.728Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:28:27.556Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:28:27.557Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:28:27.557Z] [WARN] connection.lost clientId=null
+[2026-09-12T22:28:27.558Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T22:28:27.557Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T22:28:27.558Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T22:28:34.106Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T22:28:34.107Z] [INFO] log Unity client connected with ID: editor-3936-l16k6w (relay 1.0.12-build.97)
+[2026-09-12T22:28:34.108Z] [INFO] connection.established clientId=editor-3936-l16k6w port=9001
+[2026-09-12T22:28:38.108Z] [INFO] log Domain reload signal received from client editor-3936-l16k6w
+[2026-09-12T22:28:38.108Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:28:38.109Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:28:38.840Z] [DEBUG] log Relay->Editor communication is blocked
+[2026-09-12T22:28:38.840Z] [DEBUG] acp.queue.pause depth=0
+[2026-09-12T22:28:38.841Z] [INFO] log Client disconnected - blocking and caching for recovery
+[2026-09-12T22:28:38.841Z] [WARN] connection.lost clientId=null
+[2026-09-12T22:28:38.842Z] [WARN] log Client disconnected - sessions will persist until auto-shutdown, reason: Client disconnected
+[2026-09-12T22:28:38.842Z] [INFO] log Auto-shutdown timer started due to client disconnection
+[2026-09-12T22:28:47.212Z] [DEBUG] log Relay->Editor communication is unblocked
+[2026-09-12T22:28:47.213Z] [INFO] log Unity client connected with ID: editor-3936-7d1syv (relay 1.0.12-build.97)
+[2026-09-12T22:28:47.215Z] [INFO] connection.established clientId=editor-3936-7d1syv port=9001
+[2026-09-12T22:43:28.678Z] [INFO] log Shutdown request received from client editor-3936-7d1syv
+[2026-09-12T22:43:28.680Z] [INFO] log Unity client requested immediate shutdown - shutting down now, reason: Shutdown requested by client
+[2026-09-12T22:43:28.682Z] [INFO] log Shutdown: Initiating graceful shutdown: Shutdown requested by client
