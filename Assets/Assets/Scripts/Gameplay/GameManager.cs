@@ -15,6 +15,7 @@ namespace TanksGame.Gameplay
     {
         public string nombre = "Tanque";
         [Min(1)] public int misilesIniciales = 5;
+        public TanqueSkinDatos skin;
 
         [TextArea(5, 15)]
         public string programa = "ESPERAR";
@@ -65,6 +66,8 @@ namespace TanksGame.Gameplay
         // Awake() de la escena antes que cualquier Start().
         private void Awake()
         {
+            AplicarConfiguracionDesdeProgramacionSiCorresponde();
+
             board = new GridBoard(anchoTablero, altoTablero);
             board.SetHospital(new Vector2Int(0, 0));
 
@@ -88,7 +91,8 @@ namespace TanksGame.Gameplay
 
                 var agent = new TankAgent(tank)
                 {
-                    Program = TankProgramParser.Parse(config.programa)
+                    Program = TankProgramParser.Parse(config.programa),
+                    Skin = config.skin
                 };
 
                 agents.Add(agent);
@@ -102,6 +106,38 @@ namespace TanksGame.Gameplay
                 RefrescarVista();
                 CentrarCamaraEnTablero();
             }
+        }
+
+        // Si el jugador acaba de programar tanques en PantallaProgramacionTanques,
+        // usa esos scripts y ese tamaño de tablero en vez de la configuración fija
+        // del Inspector de más arriba. Si no hay nada pendiente (por ejemplo, si
+        // esta escena se abrió directo para probarla), sigue usando esa
+        // configuración normal sin tocar nada.
+        private void AplicarConfiguracionDesdeProgramacionSiCorresponde()
+        {
+            if (!ConfiguracionPartidaPendiente.Hay) return;
+
+            var scripts = ConfiguracionPartidaPendiente.ScriptsPorTanque;
+            var skins = ConfiguracionPartidaPendiente.SkinsPorTanque;
+
+            configuracionTanques = new ConfiguracionTanque[scripts.Count];
+            for (int i = 0; i < scripts.Count; i++)
+            {
+                configuracionTanques[i] = new ConfiguracionTanque
+                {
+                    nombre = $"Tanque {i + 1}",
+                    programa = scripts[i],
+                    skin = (skins != null && i < skins.Count) ? skins[i] : default
+                };
+            }
+
+            cantidadTanques = scripts.Count;
+
+            int tamano = Mathf.Max(2, ConfiguracionPartidaPendiente.TamanoTablero);
+            anchoTablero = tamano;
+            altoTablero = tamano;
+
+            ConfiguracionPartidaPendiente.Limpiar();
         }
 
         // Reparte las posiciones iniciales: primero las 4 esquinas del tablero y,
@@ -157,7 +193,7 @@ namespace TanksGame.Gameplay
             if (vistaTablero == null) return;
 
             var datos = agents.Select(a =>
-                (playerId: a.Tank.PlayerId, posicion: a.Tank.Position, vivo: a.Tank.IsAlive));
+                (playerId: a.Tank.PlayerId, posicion: a.Tank.Position, vivo: a.Tank.IsAlive, skin: a.Skin));
 
             vistaTablero.ActualizarTanques(datos);
         }
@@ -172,6 +208,14 @@ namespace TanksGame.Gameplay
             camara.PanTo(centro);
 
             float distanciaNecesaria = Mathf.Max(board.Width, board.Height) * lado * 1.6f;
+
+            // Si el tablero pedido (ej. 20x20) necesita alejarse más de lo que la
+            // cámara tiene configurado como límite, hay que subir ese límite --
+            // si no, un tablero grande queda cortado aunque el cálculo de arriba
+            // esté bien, porque el Clamp de abajo lo topa antes de tiempo.
+            if (distanciaNecesaria > camara.maxDistance)
+                camara.maxDistance = distanciaNecesaria;
+
             camara.distance = Mathf.Clamp(distanciaNecesaria, camara.minDistance, camara.maxDistance);
         }
     }

@@ -9,6 +9,7 @@ namespace TanksGame.Gameplay
         public Tank Tank;
         public List<ProgramStep> Program = new List<ProgramStep>();
         public int ProgramPointer = 0;
+        public TanqueSkinDatos Skin;
 
         public TankAgent(Tank tank)
         {

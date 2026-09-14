@@ -5,9 +5,18 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 1
+  - enabled: 0
     path: Assets/Scenes/SampleScene.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/Scenes/PantallaProgramacionTanques.unity
+    guid: 8dcb577eb52f65341a14ca320c810850
+  - enabled: 1
+    path: Assets/Scenes/MenuPrincipal.unity
+    guid: e449089f2ca938342b4132b7b7c817c8
+  - enabled: 1
+    path: Assets/Scenes/Juego.unity
+    guid: a073bfb078b0fd5438f42f5fe046a57e
   m_configObjects:
     com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}

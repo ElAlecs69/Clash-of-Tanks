@@ -2,12 +2,14 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using TanksGame.Core;
 using TanksGame.Language;
 
 namespace TanksGame.UI
@@ -61,6 +63,10 @@ namespace TanksGame.UI
         [Header("Volver al menú")]
         [Tooltip("Nombre de la escena del menú principal (la de MenuPrincipal.cs). Debe estar agregada en File > Build Profiles > Scene List.")]
         public string nombreEscenaMenuPrincipal = "MenuPrincipal";
+
+        [Header("Iniciar partida")]
+        [Tooltip("Nombre de la escena de juego (la de GameManager). Debe estar agregada en File > Build Profiles > Scene List, igual que la del menú.")]
+        public string nombreEscenaJuego = "Juego";
 
         [Header("Rosa de los vientos (dirección)")]
         [Tooltip("Nombres de instrucciones que requieren una dirección como argumento, ej. \"MOV\" para MOV(). Se detecta cuando aparecen escritas con paréntesis vacíos: MOV()")]
@@ -123,6 +129,12 @@ namespace TanksGame.UI
         private Action<string> accionConfirmarNombreArchivo;
         private string nombreArchivoActual = "";
 
+        // Si no es null, significa que el contenido del editor vino de tocar un
+        // tanque en el Historial (ver OnSeleccionarHistorial): la próxima vez que
+        // se toque GUARDAR, se ACTUALIZA ese tanque en vez de crear uno nuevo (ver
+        // OnGuardarScriptDelTanque / ActualizarTanqueExistente).
+        private EntradaHistorial entradaEnEdicion;
+
         // Rosa de los vientos: vive DENTRO del panel de la Terminal, abajo a la derecha,
         // de forma permanente.
         private GameObject panelRosaVientos;
@@ -135,10 +147,18 @@ namespace TanksGame.UI
         // ActualizarBotonEliminarScript() / OnAlternarModoEliminar().
         private Button botonEliminarScriptRef;
         private Text textoBotonEliminarScript;
+        private Text textoBotonGuardarTanque;
         private bool modoEliminarActivo;
 
         // Un script por tanque ya programado y validado, en el orden en que se programaron.
         private readonly List<string> scriptsPorTanque = new List<string>();
+
+        // En paralelo a scriptsPorTanque (mismo índice = mismo tanque): la
+        // personalización (patrón/color/calcomanía/número/bandera) que estaba
+        // elegida en "PERSONALIZAR SKIN" en el momento de guardar ese tanque. Antes
+        // esto nunca se guardaba en ningún lado, así que la escena de Juego no
+        // tenía cómo pintar cada tanque distinto.
+        private readonly List<TanqueSkinDatos> skinsPorTanque = new List<TanqueSkinDatos>();
 
         // Control de tamaño de tablero (NxN): ahora vive como un "slot" más dentro de
         // la fila de botones de acción (ver ConstruirControlTamanoTableroCompacto).
@@ -146,6 +166,7 @@ namespace TanksGame.UI
         private Text textoTamanoTablero;
 
         private int ultimaPosicionCursorConocida;
+        private bool sincronizandoCursorProgramaticamente;
 
         private static readonly string[] PalabrasClave =
         {
@@ -195,8 +216,6 @@ namespace TanksGame.UI
             public string contenido;
         }
 
-        public static List<string> ScriptsTanquesPartida { get; private set; } = new List<string>();
-
         private void Start()
         {
             if (FindObjectOfType<AudioListener>() == null)
@@ -219,7 +238,11 @@ namespace TanksGame.UI
 
         private void Update()
         {
-            if (campoEditor != null && campoEditor.isFocused)
+            // Mientras estamos reposicionando el cursor de forma programática (tras insertar
+            // una instrucción), ignoramos la lectura de campoEditor.caretPosition: el InputField
+            // puede estar reactivándose internamente todavía y devolver una posición transitoria
+            // equivocada (fin del texto, selección, etc.) que pisaría nuestro cálculo.
+            if (!sincronizandoCursorProgramaticamente && campoEditor != null && campoEditor.isFocused)
                 ultimaPosicionCursorConocida = campoEditor.caretPosition;
 
             if (rotarTanquePreview && tanquePreviewInstancia != null)
@@ -359,7 +382,7 @@ namespace TanksGame.UI
                 new Vector2(offsetIzq, -(y + alto)), new Vector2(offsetDer, -y),
                 colorPanel, null);
 
-            const float ladoFlecha = 34f;
+            const float ladoFlecha = 42f;
 
             var botonMenos = CrearRect(contenedor.transform, "BotonMenos",
                 new Vector2(4, (alto - ladoFlecha) / 2f), new Vector2(ladoFlecha, ladoFlecha), colorBoton);
@@ -367,7 +390,7 @@ namespace TanksGame.UI
             btnMenos.targetGraphic = botonMenos.GetComponent<Image>();
             btnMenos.onClick.AddListener(() => CambiarTamanoTablero(-1));
             CrearTexto(botonMenos.transform, "Texto", "-", Vector2.zero, new Vector2(ladoFlecha, ladoFlecha),
-                20, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+                26, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
             // Anclado a la esquina superior derecha del propio slot (en vez de
             // depender de un "ancho" fijo), así funciona con cualquier ancho de slot.
@@ -377,17 +400,17 @@ namespace TanksGame.UI
             btnMas.targetGraphic = botonMas.GetComponent<Image>();
             btnMas.onClick.AddListener(() => CambiarTamanoTablero(1));
             CrearTexto(botonMas.transform, "Texto", "+", Vector2.zero, new Vector2(ladoFlecha, ladoFlecha),
-                20, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+                26, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
-            // Texto "N x N": ahora más grande (16, antes 13) y estirado/centrado a
-            // todo el ancho del slot en vez de un ancho fijo.
+            // Texto "N x N": bien grande (26, antes 16) y estirado/centrado a todo el
+            // ancho del slot en vez de un ancho fijo.
             textoTamanoTablero = CrearTextoElastico(contenedor.transform, "TextoTamano", "7 x 7",
                 new Vector2(0, 1), new Vector2(1, 1),
-                new Vector2(0, -(8 + 26)), new Vector2(0, -8),
-                16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+                new Vector2(0, -(6 + 38)), new Vector2(0, -6),
+                26, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
-            const float ladoIcono = 48f;
-            CrearIconoGrid3x3Centrado(contenedor.transform, 38f, ladoIcono);
+            const float ladoIcono = 62f;
+            CrearIconoGrid3x3Centrado(contenedor.transform, 48f, ladoIcono);
         }
 
         // Ícono de grilla 3x3 (representa visualmente "el tablero"), centrado
@@ -581,16 +604,54 @@ namespace TanksGame.UI
 
         private void InsertarEnEditor(string fragmento)
         {
-            string texto = campoEditor.text;
-            int posicion = Mathf.Clamp(ultimaPosicionCursorConocida, 0, texto.Length);
+            if (campoEditor == null || string.IsNullOrEmpty(fragmento)) return;
 
-            string nuevoTexto = texto.Insert(posicion, fragmento);
-            campoEditor.text = nuevoTexto;
-            int nuevaPosicion = posicion + fragmento.Length;
+            // El editor se comporta como un editor normal: los botones insertan exactamente
+            // donde está el cursor. No agregamos saltos de línea ni indentación automática.
+            string texto = campoEditor.text;
+            int posicion = Mathf.Clamp(ObtenerCursorActual(), 0, texto.Length);
+
+            campoEditor.text = texto.Insert(posicion, fragmento);
+
+            // Única comodidad especial: si se insertó una instrucción con "( )",
+            // dejamos el cursor dentro de los paréntesis para continuar escribiendo ahí.
+            int indiceParentesis = fragmento.IndexOf("( )", StringComparison.Ordinal);
+            int nuevaPosicion = indiceParentesis >= 0
+                ? posicion + indiceParentesis + 2
+                : posicion + fragmento.Length;
 
             ActualizarEditorSinMoverCursor();
-
             ultimaPosicionCursorConocida = nuevaPosicion;
+
+            StopAllCoroutines();
+            StartCoroutine(EnfocarEditorYFijarCursor(nuevaPosicion));
+        }
+
+        private IEnumerator EnfocarEditorYFijarCursor(int posicion)
+        {
+            sincronizandoCursorProgramaticamente = true;
+            campoEditor.ActivateInputField();
+
+            // La reactivación interna del InputField ocurre en un frame posterior (no es
+            // inmediata). Esperamos a que quede realmente enfocado, con un pequeño margen de
+            // seguridad, y recién ahí fijamos la posición UNA sola vez y soltamos el control:
+            // si seguimos forzando la posición frame a frame, le ganamos también a las teclas
+            // (flechas, Enter) que el usuario presione justo después de hacer clic.
+            int intentos = 0;
+            while (!campoEditor.isFocused && intentos < 6)
+            {
+                yield return null;
+                intentos++;
+            }
+            yield return null;
+
+            int posicionClamp = Mathf.Clamp(posicion, 0, campoEditor.text.Length);
+            campoEditor.selectionAnchorPosition = posicionClamp;
+            campoEditor.selectionFocusPosition = posicionClamp;
+            campoEditor.caretPosition = posicionClamp;
+
+            ultimaPosicionCursorConocida = posicionClamp;
+            sincronizandoCursorProgramaticamente = false;
         }
 
         // ------------------------------------------------------------------
@@ -653,13 +714,13 @@ namespace TanksGame.UI
 
             var textoGuardarTanqueGo = new GameObject("Texto");
             textoGuardarTanqueGo.transform.SetParent(botonGuardarTanque.transform, false);
-            var textoGuardarTanque = textoGuardarTanqueGo.AddComponent<Text>();
-            textoGuardarTanque.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            textoGuardarTanque.fontSize = 14;
-            textoGuardarTanque.fontStyle = FontStyle.Bold;
-            textoGuardarTanque.alignment = TextAnchor.MiddleCenter;
-            textoGuardarTanque.color = colorTexto;
-            textoGuardarTanque.text = "GUARDAR";
+            textoBotonGuardarTanque = textoGuardarTanqueGo.AddComponent<Text>();
+            textoBotonGuardarTanque.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            textoBotonGuardarTanque.fontSize = 14;
+            textoBotonGuardarTanque.fontStyle = FontStyle.Bold;
+            textoBotonGuardarTanque.alignment = TextAnchor.MiddleCenter;
+            textoBotonGuardarTanque.color = colorTexto;
+            textoBotonGuardarTanque.text = "GUARDAR";
             var textoGuardarTanqueRect = textoGuardarTanqueGo.GetComponent<RectTransform>();
             textoGuardarTanqueRect.anchorMin = Vector2.zero;
             textoGuardarTanqueRect.anchorMax = Vector2.one;
@@ -750,35 +811,55 @@ namespace TanksGame.UI
             string texto = campoEditor.text;
             if (string.IsNullOrEmpty(texto)) return;
 
-            string sinSaltoFinal = texto.EndsWith("\n") ? texto.Substring(0, texto.Length - 1) : texto;
-            int ultimoSalto = sinSaltoFinal.LastIndexOf('\n');
-            string nuevoTexto = ultimoSalto >= 0 ? sinSaltoFinal.Substring(0, ultimoSalto + 1) : "";
-
-            campoEditor.text = nuevoTexto;
-            ActualizarEditorTrasCambio();
-        }
-
-        private void InsertarNuevaLineaConIndentacion()
-        {
-            string texto = campoEditor.text;
-            int caret = Mathf.Clamp(campoEditor.caretPosition, 0, texto.Length);
+            int caret = Mathf.Clamp(campoEditor.isFocused ? campoEditor.caretPosition : ultimaPosicionCursorConocida, 0, texto.Length);
+            if (caret <= 0) return;
 
             int inicioLinea = texto.LastIndexOf('\n', Mathf.Max(0, caret - 1)) + 1;
-            string lineaActual = texto.Substring(inicioLinea, caret - inicioLinea);
 
-            int cantidadEspacios = 0;
-            while (cantidadEspacios < lineaActual.Length && lineaActual[cantidadEspacios] == ' ')
-                cantidadEspacios++;
-            string indentacion = new string(' ', cantidadEspacios);
+            int inicioABorrar;
+            if (caret == inicioLinea)
+            {
+                // El cursor está al principio de la línea (línea vacía): unimos con la
+                // línea anterior borrando solo el salto de línea, no contenido de la anterior.
+                inicioABorrar = inicioLinea - 1;
+            }
+            else
+            {
+                string antesEnLinea = texto.Substring(inicioLinea, caret - inicioLinea);
+                inicioABorrar = inicioLinea + EncontrarInicioTokenABorrar(antesEnLinea);
+            }
 
-            if (lineaActual.TrimEnd().EndsWith("{"))
-                indentacion += "    ";
-
-            string nuevoTexto = texto.Insert(caret, "\n" + indentacion);
+            string nuevoTexto = texto.Remove(inicioABorrar, caret - inicioABorrar);
             campoEditor.text = nuevoTexto;
-            campoEditor.caretPosition = caret + 1 + indentacion.Length;
 
-            ActualizarEditorTrasCambio();
+            ActualizarEditorSinMoverCursor();
+            if (scrollTerminal != null)
+                scrollTerminal.verticalNormalizedPosition = 0f;
+
+            StopAllCoroutines();
+            StartCoroutine(EnfocarEditorYFijarCursor(inicioABorrar));
+        }
+
+        private static readonly string PatronInstruccionConParametro =
+            @"(" + string.Join("|", new[] { "MOV", "AMT", "RADAR", "MISIL" }.Select(Regex.Escape)) + @")\([NSEO]?\)$";
+        private static readonly string PatronPalabraClaveFinal =
+            @"\b(" + string.Join("|", PalabrasClave.Select(Regex.Escape)) + @")$";
+
+        // Devuelve, dentro de "antesEnLinea" (el texto de la línea actual hasta el cursor),
+        // el índice donde empieza el "token" que el retroceso debe borrar completo de un golpe:
+        // una instrucción con parámetro ("MOV(N)"), una palabra clave completa ("IF", "MINA",
+        // "BUCLE", etc.), o -si nada de eso aplica- un solo símbolo (espacio, paréntesis, etc.).
+        private int EncontrarInicioTokenABorrar(string antesEnLinea)
+        {
+            var matchConParametro = Regex.Match(antesEnLinea, PatronInstruccionConParametro);
+            if (matchConParametro.Success)
+                return matchConParametro.Index;
+
+            var matchPalabraClave = Regex.Match(antesEnLinea, PatronPalabraClaveFinal);
+            if (matchPalabraClave.Success)
+                return matchPalabraClave.Index;
+
+            return antesEnLinea.Length - 1;
         }
 
         private Text CrearRectElasticoTextoInferior(Transform padre)
@@ -1140,6 +1221,21 @@ namespace TanksGame.UI
             return Sprite.Create(textura, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f));
         }
 
+        // Lee la personalización actualmente elegida en "PERSONALIZAR SKIN" (la
+        // misma que se ve en "Vista previa del tanque"), como snapshot para
+        // guardarla junto con el script del tanque.
+        private TanqueSkinDatos ObtenerSkinActual()
+        {
+            return new TanqueSkinDatos
+            {
+                Patron = seleccionActual.TryGetValue("Patron", out var p) ? p : 0,
+                Color = seleccionActual.TryGetValue("Color", out var c) ? c : 0,
+                Calcomania = seleccionActual.TryGetValue("Calcomania", out var d) ? d : 0,
+                Numero = seleccionActual.TryGetValue("Numero", out var num) ? num : 0,
+                Bandera = seleccionActual.TryGetValue("Bandera", out var b) ? b : 0
+            };
+        }
+
         private void ActualizarVistaPreviaTanque()
         {
             int iPatron = seleccionActual.TryGetValue("Patron", out var p) ? p : 0;
@@ -1334,11 +1430,12 @@ namespace TanksGame.UI
                 18, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
         }
 
-        private bool BuscarInstruccionPendiente(string texto, out string comandoEncontrado, out int indice, out int longitud)
+        private bool BuscarInstruccionPendiente(string texto, int cursor, out string comandoEncontrado, out int indice, out int longitud)
         {
             comandoEncontrado = null;
             indice = -1;
             longitud = 0;
+            int mejorDistancia = int.MaxValue;
 
             foreach (var comando in comandosQueRequierenDireccion)
             {
@@ -1346,10 +1443,21 @@ namespace TanksGame.UI
 
                 foreach (Match match in Regex.Matches(texto, $@"{Regex.Escape(comando)}\([NSEO]?\)"))
                 {
-                    if (match.Index > indice)
+                    int inicioMatch = match.Index;
+                    int finMatch = match.Index + match.Length;
+
+                    // Si el cursor está dentro (o justo pegado a) la instrucción, es la más
+                    // relevante posible. Si no, nos quedamos con la que esté más cerca del
+                    // cursor, en vez de siempre la última del texto.
+                    int distancia = (cursor >= inicioMatch && cursor <= finMatch)
+                        ? 0
+                        : Mathf.Min(Mathf.Abs(cursor - inicioMatch), Mathf.Abs(cursor - finMatch));
+
+                    if (distancia < mejorDistancia)
                     {
+                        mejorDistancia = distancia;
                         comandoEncontrado = comando;
-                        indice = match.Index;
+                        indice = inicioMatch;
                         longitud = match.Length;
                     }
                 }
@@ -1358,9 +1466,16 @@ namespace TanksGame.UI
             return comandoEncontrado != null;
         }
 
+        private int ObtenerCursorActual()
+        {
+            int longitudTexto = campoEditor.text.Length;
+            int cursor = campoEditor.isFocused ? campoEditor.caretPosition : ultimaPosicionCursorConocida;
+            return Mathf.Clamp(cursor, 0, longitudTexto);
+        }
+
         private void ActualizarDeteccionDireccion()
         {
-            bool hayInstruccion = BuscarInstruccionPendiente(campoEditor.text, out _, out int indice, out int longitud);
+            bool hayInstruccion = BuscarInstruccionPendiente(campoEditor.text, ObtenerCursorActual(), out _, out int indice, out int longitud);
             textoInstruccionPendienteDireccion.text = hayInstruccion
                 ? $"Editando: {campoEditor.text.Substring(indice, longitud)}"
                 : "—";
@@ -1369,7 +1484,7 @@ namespace TanksGame.UI
         private void OnSeleccionarDireccion(char letra)
         {
             string texto = campoEditor.text;
-            if (!BuscarInstruccionPendiente(texto, out string comando, out int indice, out int longitud))
+            if (!BuscarInstruccionPendiente(texto, ObtenerCursorActual(), out string comando, out int indice, out int longitud))
                 return;
 
             string reemplazo = $"{comando}({letra})";
@@ -1377,10 +1492,10 @@ namespace TanksGame.UI
             campoEditor.text = texto;
 
             int nuevaPosicion = indice + reemplazo.Length;
-            campoEditor.caretPosition = nuevaPosicion;
-            ultimaPosicionCursorConocida = nuevaPosicion;
-
             ActualizarEditorSinMoverCursor();
+
+            StopAllCoroutines();
+            StartCoroutine(EnfocarEditorYFijarCursor(nuevaPosicion));
         }
 
         // ------------------------------------------------------------------
@@ -1691,7 +1806,6 @@ namespace TanksGame.UI
             campo.lineType = InputField.LineType.MultiLineNewline;
             campo.text = textoInicial;
             campo.onBackspacePorLinea = OnBorrarUltimaInstruccion;
-            campo.onEnterPorLinea = InsertarNuevaLineaConIndentacion;
 
             campo.customCaretColor = true;
             campo.caretColor = Color.white;
@@ -1705,46 +1819,38 @@ namespace TanksGame.UI
 
         private class InputFieldPorLinea : InputField
         {
-            public System.Action onBackspacePorLinea;
-            public System.Action onEnterPorLinea;
+            public Action onBackspacePorLinea;
 
             public override void OnUpdateSelected(BaseEventData eventData)
             {
                 if (!isFocused) return;
 
-                bool huboEvento = false;
+                bool backspaceProcesado = false;
                 var evt = new Event();
+
                 while (Event.PopEvent(evt))
                 {
-                    if (evt.rawType == EventType.KeyDown && evt.keyCode == KeyCode.Backspace)
-                    {
-                        huboEvento = true;
-                        onBackspacePorLinea?.Invoke();
-                        continue;
-                    }
+                    bool esBackspace = evt.rawType == EventType.KeyDown &&
+                        (evt.keyCode == KeyCode.Backspace || evt.character == '\b');
 
-                    if (evt.rawType == EventType.KeyDown && (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter))
+                    if (esBackspace)
                     {
-                        huboEvento = true;
-                        onEnterPorLinea?.Invoke();
-                        continue;
-                    }
-
-                    if (evt.rawType == EventType.KeyDown)
-                    {
-                        huboEvento = true;
-                        var estado = KeyPressed(evt);
-                        if (estado == EditState.Finish)
+                        // Solo Backspace tiene el comportamiento especial del juego.
+                        // Todo lo demás (texto, Enter, flechas, Home/End, Ctrl+C/V/X/A,
+                        // selección, etc.) lo procesa el InputField estándar de Unity.
+                        if (!backspaceProcesado)
                         {
-                            DeactivateInputField();
-                            break;
+                            backspaceProcesado = true;
+                            onBackspacePorLinea?.Invoke();
                         }
+
+                        continue;
                     }
+
+                    ProcessEvent(evt);
                 }
 
-                if (huboEvento)
-                    UpdateLabel();
-
+                UpdateLabel();
                 eventData.Use();
             }
         }
@@ -1911,20 +2017,18 @@ namespace TanksGame.UI
         {
             campoEditor.text = "";
             ActualizarEditorTrasCambio();
+            entradaEnEdicion = null;
+            ActualizarEtiquetaBotonGuardar();
             ActualizarTextoEstado("LISTO", esError: false);
         }
 
-        // Valida el script del tanque actual y lo agrega al Historial como
-        // "Tanque N". El editor se limpia SIEMPRE después de un guardado exitoso,
-        // para seguir directo con el próximo tanque sin necesitar un botón aparte.
+        // Valida el script del tanque actual. Si el contenido vino de tocar un
+        // tanque en el Historial (entradaEnEdicion != null), lo ACTUALIZA en vez de
+        // crear uno nuevo — antes, editar y volver a guardar generaba un tanque
+        // adicional por error. El editor se limpia SIEMPRE después de un guardado
+        // nuevo exitoso, para seguir directo con el próximo tanque.
         private void OnGuardarScriptDelTanque()
         {
-            if (scriptsPorTanque.Count >= cantidadMaximaTanques)
-            {
-                ActualizarTextoEstado($"Ya programaste el máximo de {cantidadMaximaTanques} tanques", esError: true);
-                return;
-            }
-
             string texto = campoEditor.text;
 
             if (string.IsNullOrWhiteSpace(texto))
@@ -1943,6 +2047,18 @@ namespace TanksGame.UI
                 return;
             }
 
+            if (entradaEnEdicion != null)
+            {
+                ActualizarTanqueExistente(texto);
+                return;
+            }
+
+            if (scriptsPorTanque.Count >= cantidadMaximaTanques)
+            {
+                ActualizarTextoEstado($"Ya programaste el máximo de {cantidadMaximaTanques} tanques", esError: true);
+                return;
+            }
+
             int tanquesProgramados = scriptsPorTanque.Count + 1;
             string nombreTanque = $"Tanque {tanquesProgramados}";
 
@@ -1956,6 +2072,7 @@ namespace TanksGame.UI
             ReconstruirListaHistorial();
 
             scriptsPorTanque.Add(texto);
+            skinsPorTanque.Add(ObtenerSkinActual());
             ActualizarTamanoMinimoTablero(tanquesProgramados);
 
             campoEditor.text = "";
@@ -1980,6 +2097,48 @@ namespace TanksGame.UI
             ActualizarBotonEliminarScript();
         }
 
+        // Actualiza el script de un tanque que ya estaba guardado (el que se cargó
+        // con un click en el Historial) en vez de agregar uno nuevo. El editor NO se
+        // limpia acá: se deja el texto actualizado a la vista, como confirmación.
+        private void ActualizarTanqueExistente(string texto)
+        {
+            int indice = historial.IndexOf(entradaEnEdicion);
+            if (indice < 0)
+            {
+                // La entrada ya no existe (por ejemplo, se borró mientras se
+                // editaba): se trata como un tanque nuevo, para no perder lo escrito.
+                entradaEnEdicion = null;
+                ActualizarEtiquetaBotonGuardar();
+                OnGuardarScriptDelTanque();
+                return;
+            }
+
+            entradaEnEdicion.contenido = texto;
+            entradaEnEdicion.fechaHora = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+            if (indice < scriptsPorTanque.Count)
+                scriptsPorTanque[indice] = texto;
+            if (indice < skinsPorTanque.Count)
+                skinsPorTanque[indice] = ObtenerSkinActual();
+
+            string nombreTanque = entradaEnEdicion.nombre;
+            entradaEnEdicion = null;
+            ActualizarEtiquetaBotonGuardar();
+
+            ReconstruirListaHistorial();
+            ActualizarTextoEstado($"{nombreTanque} actualizado correctamente.", esError: false);
+        }
+
+        private void ActualizarEtiquetaBotonGuardar()
+        {
+            if (textoBotonGuardarTanque != null)
+                textoBotonGuardarTanque.text = entradaEnEdicion != null ? "ACTUALIZAR" : "GUARDAR";
+        }
+
+        // Arranca la partida de verdad: le deja los tanques programados y el tamaño
+        // de tablero al GameManager (a través de ConfiguracionPartidaPendiente, en
+        // TanksGame.Core) y recién ahí carga la escena de juego. El GameManager los
+        // lee solo en su propio Awake() (ver GameManager.cs) — acá no hace falta
+        // ninguna otra referencia a la escena de juego.
         private void OnIniciarPartida()
         {
             if (scriptsPorTanque.Count < cantidadMinimaTanquesParaJugar)
@@ -1990,11 +2149,8 @@ namespace TanksGame.UI
                 return;
             }
 
-            ScriptsTanquesPartida = new List<string>(scriptsPorTanque);
-
-            ActualizarTextoEstado(
-                $"Partida iniciada con {scriptsPorTanque.Count} tanques (tablero {tamanoTablero}x{tamanoTablero})",
-                esError: false);
+            ConfiguracionPartidaPendiente.Establecer(new List<string>(scriptsPorTanque), new List<TanqueSkinDatos>(skinsPorTanque), tamanoTablero);
+            SceneManager.LoadScene(nombreEscenaJuego);
         }
 
         private void OnLimpiarHistorial()
@@ -2005,7 +2161,15 @@ namespace TanksGame.UI
         private void ConfirmarLimpiarHistorial()
         {
             historial.Clear();
+            scriptsPorTanque.Clear(); // antes esto quedaba desincronizado: el Historial se vaciaba pero los tanques seguían "programados".
+            skinsPorTanque.Clear();
+            entradaEnEdicion = null;
+            modoEliminarActivo = false;
+
             ReconstruirListaHistorial();
+            ActualizarBotonEliminarScript();
+            ActualizarEtiquetaBotonGuardar();
+            ActualizarTextoEstado("Historial y tanques programados reiniciados.", esError: false);
         }
 
         private void OnSeleccionarHistorial(EntradaHistorial entrada)
@@ -2013,7 +2177,9 @@ namespace TanksGame.UI
             campoEditor.text = entrada.contenido;
             ActualizarEditorTrasCambio();
             nombreArchivoActual = entrada.nombre;
-            ActualizarTextoEstado($"Cargado del historial: \"{entrada.nombre}\"", esError: false);
+            entradaEnEdicion = entrada;
+            ActualizarEtiquetaBotonGuardar();
+            ActualizarTextoEstado($"Editando \"{entrada.nombre}\" — al tocar ACTUALIZAR se guardan los cambios en este mismo tanque.", esError: false);
         }
 
         // ------------------------------------------------------------------
@@ -2044,13 +2210,25 @@ namespace TanksGame.UI
             ReconstruirListaHistorial();
         }
 
-        // Borra un tanque puntual: lo saca del Historial Y de la lista de scripts que
-        // realmente cuentan como "programados" (scriptsPorTanque), buscándolo por el
-        // contenido exacto del script.
+        // Borra un tanque puntual: lo saca del Historial y, por índice, de
+        // scriptsPorTanque/skinsPorTanque (antes se buscaba por el contenido
+        // exacto del script, lo que podía borrar el tanque equivocado si dos
+        // tanques tenían el mismo programa).
         private void OnEliminarTanque(EntradaHistorial entrada)
         {
+            int indice = historial.IndexOf(entrada);
+
             historial.Remove(entrada);
-            scriptsPorTanque.Remove(entrada.contenido);
+            if (indice >= 0 && indice < scriptsPorTanque.Count)
+                scriptsPorTanque.RemoveAt(indice);
+            if (indice >= 0 && indice < skinsPorTanque.Count)
+                skinsPorTanque.RemoveAt(indice);
+
+            if (entradaEnEdicion == entrada)
+            {
+                entradaEnEdicion = null;
+                ActualizarEtiquetaBotonGuardar();
+            }
 
             ReconstruirListaHistorial();
             ActualizarBotonEliminarScript();

@@ -14,7 +14,7 @@ namespace TanksGame.CameraControl
         public Transform target;
         public float distance = 12f;
         public float minDistance = 5f;
-        public float maxDistance = 25f;
+        public float maxDistance = 40f; // el GameManager lo sube más todavía si el tablero lo necesita.
         public float zoomSpeed = 0.01f; // el scroll del nuevo Input System entrega valores grandes (~120)
         public float orbitSpeed = 0.15f; // sensibilidad del delta del mouse en píxeles
         public float initialPitch = 45f; // ángulo isométrico clásico

@@ -16,9 +16,16 @@ namespace TanksGame.Gameplay
         public GridBoard Board;
         public List<TankAgent> Agents;
         public List<string> LastRoundLog = new List<string>();
-        public int RondasSinDanio { get; private set; }
         public int RondasAntesDeDesgaste = 2;
         public float DanioPorDesgaste = 2f;
+
+        // Cuántas rondas SEGUIDAS lleva cada tanque con un MOV inválido (fuera del
+        // tablero o bloqueado por un obstáculo). Es POR TANQUE a propósito: antes
+        // este desgaste era global (si nadie se movía ni hacía daño en toda la
+        // ronda, TODOS perdían vida, incluso un tanque que eligió ESPERAR a
+        // propósito) — ahora solo se castiga al que realmente está atascado contra
+        // algo, nunca al que decide esperar.
+        private readonly Dictionary<TankAgent, int> rondasAtascadoPorAgente = new Dictionary<TankAgent, int>();
 
         public TurnManager(GridBoard board, List<TankAgent> agents)
         {
@@ -30,7 +37,6 @@ namespace TanksGame.Gameplay
         {
             LastRoundLog.Clear();
             bool huboDanio = false;
-            bool huboMovimiento = false;
 
             // El escudo protege solo durante el turno en que se activa (sección 13).
             foreach (var agent in Agents)
@@ -44,6 +50,7 @@ namespace TanksGame.Gameplay
                 if (step == null)
                 {
                     LastRoundLog.Add($"Jugador {agent.Tank.PlayerId}: sin instrucciones, ESPERA.");
+                    RegistrarTurnoNoAtascado(agent);
                     continue;
                 }
 
@@ -53,20 +60,21 @@ namespace TanksGame.Gameplay
                 if (!shouldExecute)
                 {
                     LastRoundLog.Add($"Jugador {agent.Tank.PlayerId}: condición IF falsa, ESPERA.");
+                    RegistrarTurnoNoAtascado(agent);
                     continue;
                 }
 
-                Execute(agent, step.Instruction, ref huboDanio, ref huboMovimiento);
+                Execute(agent, step.Instruction, ref huboDanio);
             }
 
             CheckMines(ref huboDanio);
             CheckCollisions(ref huboDanio);
-            AplicarDesgastePorEstancamiento(huboDanio, huboMovimiento);
+            AplicarDesgastePorEstancamiento();
 
             return CheckWinner();
         }
 
-        private void Execute(TankAgent agent, Instruction instruction, ref bool huboDanio, ref bool huboMovimiento)
+        private void Execute(TankAgent agent, Instruction instruction, ref bool huboDanio)
         {
             var tank = agent.Tank;
 
@@ -81,17 +89,19 @@ namespace TanksGame.Gameplay
                     if (!Board.IsInside(newPos))
                     {
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: MOV({dir}) inválido, fuera del tablero.");
+                        RegistrarTurnoAtascado(agent);
                         break;
                     }
                     if (Board.IsObstacle(newPos))
                     {
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: MOV({dir}) bloqueado por un obstáculo.");
+                        RegistrarTurnoAtascado(agent);
                         break;
                     }
 
                     tank.Position = newPos;
-                    huboMovimiento = true;
                     LastRoundLog.Add($"Jugador {tank.PlayerId}: se mueve a {newPos}.");
+                    RegistrarTurnoNoAtascado(agent);
                     break;
                 }
                 case InstructionType.Amt:
@@ -110,11 +120,13 @@ namespace TanksGame.Gameplay
                     {
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: AMT({dir}) no impacta a nadie.");
                     }
+                    RegistrarTurnoNoAtascado(agent);
                     break;
                 }
                 case InstructionType.Mina:
                     Board.PlaceMine(tank.Position);
                     LastRoundLog.Add($"Jugador {tank.PlayerId}: coloca una mina en {tank.Position}.");
+                    RegistrarTurnoNoAtascado(agent);
                     break;
 
                 case InstructionType.Misil:
@@ -122,6 +134,7 @@ namespace TanksGame.Gameplay
                     if (tank.Missiles <= 0)
                     {
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: MISIL inválido, sin munición.");
+                        RegistrarTurnoNoAtascado(agent); // se quedó sin balas, no "atascado contra algo".
                         break;
                     }
 
@@ -138,6 +151,7 @@ namespace TanksGame.Gameplay
                     {
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: MISIL no impacta a nadie.");
                     }
+                    RegistrarTurnoNoAtascado(agent);
                     break;
                 }
                 case InstructionType.Radar:
@@ -145,15 +159,18 @@ namespace TanksGame.Gameplay
                     var dir = instruction.Dir ?? tank.Facing;
                     var value = Radar(tank, dir);
                     LastRoundLog.Add($"Jugador {tank.PlayerId}: RADAR({dir}) = {value}.");
+                    RegistrarTurnoNoAtascado(agent);
                     break;
                 }
                 case InstructionType.Escudo:
                     tank.ShieldActive = true;
                     LastRoundLog.Add($"Jugador {tank.PlayerId}: activa ESCUDO.");
+                    RegistrarTurnoNoAtascado(agent);
                     break;
 
                 case InstructionType.Esperar:
                     LastRoundLog.Add($"Jugador {tank.PlayerId}: ESPERA.");
+                    RegistrarTurnoNoAtascado(agent);
                     break;
 
                 case InstructionType.Reparar:
@@ -166,6 +183,7 @@ namespace TanksGame.Gameplay
                     {
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: REPARAR inválido, no está en el Hospital.");
                     }
+                    RegistrarTurnoNoAtascado(agent);
                     break;
             }
         }
@@ -228,24 +246,34 @@ namespace TanksGame.Gameplay
             return tank.Health < vidaAnterior;
         }
 
-        private void AplicarDesgastePorEstancamiento(bool huboDanio, bool huboMovimiento)
+        private void RegistrarTurnoAtascado(TankAgent agent)
         {
-            // Solo hay desgaste si la ronda no produjo combate NI desplazamiento:
-            // es decir, todos los tanques se quedaron realmente atorados.
-            if (huboDanio || huboMovimiento)
-            {
-                RondasSinDanio = 0;
-                return;
-            }
+            rondasAtascadoPorAgente.TryGetValue(agent, out int actual);
+            rondasAtascadoPorAgente[agent] = actual + 1;
+        }
 
-            RondasSinDanio++;
-            if (RondasSinDanio < RondasAntesDeDesgaste) return;
+        private void RegistrarTurnoNoAtascado(TankAgent agent)
+        {
+            rondasAtascadoPorAgente[agent] = 0;
+        }
 
-            foreach (var tank in AliveTanks().ToList())
+        // Ahora es POR TANQUE (antes era una sola cuenta global de la ronda). Solo
+        // castiga al tanque que lleva 'RondasAntesDeDesgaste' turnos SEGUIDOS con un
+        // MOV inválido (fuera del tablero o bloqueado por un obstáculo) — es decir,
+        // realmente atascado contra algo. ESPERAR (explícito, por falta de
+        // instrucciones, o por un IF falso) nunca cuenta como estancamiento: es una
+        // decisión válida del jugador, no un bloqueo.
+        private void AplicarDesgastePorEstancamiento()
+        {
+            foreach (var agent in Agents)
             {
-                if (!AplicarDanio(tank, DanioPorDesgaste)) continue;
-                LastRoundLog.Add($"Jugador {tank.PlayerId}: desgaste por estancamiento (-{DanioPorDesgaste}%).");
-                HandleIfDestroyed(tank);
+                if (!agent.Tank.IsAlive) continue;
+                if (!rondasAtascadoPorAgente.TryGetValue(agent, out int rondas)) continue;
+                if (rondas < RondasAntesDeDesgaste) continue;
+
+                if (!AplicarDanio(agent.Tank, DanioPorDesgaste)) continue;
+                LastRoundLog.Add($"Jugador {agent.Tank.PlayerId}: desgaste por estancamiento (-{DanioPorDesgaste}%).");
+                HandleIfDestroyed(agent.Tank);
             }
         }
 
