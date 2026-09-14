@@ -128,9 +128,10 @@ namespace TanksGame.UI
         private GameObject panelRosaVientos;
         private Text textoInstruccionPendienteDireccion;
 
-        // Botón "Eliminar script de tanque" (arriba a la derecha del panel de
-        // Terminal). Alterna un modo donde aparece un "-" junto a cada tanque del
-        // Historial para poder borrarlo individualmente. Ver
+        // Botón "Eliminar script de tanque" (ahora vive como uno de los 5 botones
+        // principales de la barra superior, en lugar de "Borrar script" — ver
+        // ConstruirBarraSuperior). Alterna un modo donde aparece un "-" junto a cada
+        // tanque del Historial para poder borrarlo individualmente. Ver
         // ActualizarBotonEliminarScript() / OnAlternarModoEliminar().
         private Button botonEliminarScriptRef;
         private Text textoBotonEliminarScript;
@@ -287,9 +288,13 @@ namespace TanksGame.UI
         // ------------------------------------------------------------------
         // BARRA SUPERIOR: título + 5 botones de acción + control de tablero (6to slot).
         // Ancla elástica: fija al borde superior, estirada a todo el ancho.
+        //
+        // Los 6 slots (5 botones + el control de tablero) se reparten por FRACCIÓN
+        // de ancho (no en píxeles fijos), así la fila siempre ocupa TODO el ancho
+        // disponible de la barra sin importar la resolución de pantalla.
         // ------------------------------------------------------------------
 
-        private const float ALTURA_BARRA = 215f;
+        private const float ALTURA_BARRA = 235f;
         private const float MARGEN = 15f;
         private const float ANCHO_HISTORIAL = 325f;
         private const float ANCHO_INSTRUCCIONES = 325f;
@@ -311,33 +316,48 @@ namespace TanksGame.UI
             AgregarFranjaAcento(barra.transform, 70f);
             AgregarBracketsDeEsquina(barra.transform, colorAcentoMilitar);
 
-            // 6 slots del mismo ancho (5 botones + el control de tablero), repartidos
-            // en el mismo espacio horizontal que antes ocupaban los 5 botones solos.
-            float anchoBoton = 238f, alto = 95f, y = 105f;
-            float[] xBotones = { 15, 268, 521, 774, 1027 };
-            const float xControlTablero = 1280f;
+            const int totalSlots = 6;
+            float alto = 115f, y = 100f;
 
-            CrearBotonAccion(barra.transform, "BotonGuardarScript", "GUARDAR SCRIPT", ".TXT",
-                new Vector2(xBotones[0], y), new Vector2(anchoBoton, alto), colorBoton, OnGuardarScript);
-            CrearBotonAccion(barra.transform, "BotonCargarScript", "CARGAR SCRIPT", ".TXT",
-                new Vector2(xBotones[1], y), new Vector2(anchoBoton, alto), colorBoton, OnCargarScript);
-            CrearBotonAccion(barra.transform, "BotonVolverMenu", "MENÚ DE INICIO", "VOLVER",
-                new Vector2(xBotones[2], y), new Vector2(anchoBoton, alto), colorBotonAccentoRojo, OnVolverAlMenu, colorEsAccento: true);
-            CrearBotonAccion(barra.transform, "BotonBorrarScript", "BORRAR SCRIPT", "",
-                new Vector2(xBotones[3], y), new Vector2(anchoBoton, alto), colorBoton, OnBorrarScript);
-            CrearBotonAccion(barra.transform, "BotonIniciarPartida", "INICIAR", "PARTIDA",
-                new Vector2(xBotones[4], y), new Vector2(anchoBoton, alto), colorBotonAccentoVerde, OnIniciarPartida, colorEsAccento: true);
+            CrearBotonAccionSlot(barra.transform, "BotonGuardarScript", "GUARDAR SCRIPT", ".TXT",
+                0, totalSlots, y, alto, colorBoton, OnGuardarScript);
+            CrearBotonAccionSlot(barra.transform, "BotonCargarScript", "CARGAR SCRIPT", ".TXT",
+                1, totalSlots, y, alto, colorBoton, OnCargarScript);
+            CrearBotonAccionSlot(barra.transform, "BotonVolverMenu", "MENÚ DE INICIO", "VOLVER",
+                2, totalSlots, y, alto, colorBotonAccentoRojo, OnVolverAlMenu, colorEsAccento: true);
 
-            ConstruirControlTamanoTableroCompacto(barra.transform, xControlTablero, y, anchoBoton, alto);
+            // Antes acá vivía "BORRAR SCRIPT" y "ELIMINAR SCRIPT DE TANQUE" era un
+            // botón chico arriba a la derecha de la Terminal. Se intercambiaron de
+            // lugar: ahora "ELIMINAR SCRIPT DE TANQUE" es uno de los 5 botones
+            // principales, y "BORRAR SCRIPT" pasó al rincón de la Terminal (ver
+            // ConstruirPanelTerminal).
+            var botonEliminarScript = CrearBotonAccionSlot(barra.transform, "BotonEliminarScriptTanque",
+                "ELIMINAR SCRIPT DE TANQUE", "",
+                3, totalSlots, y, alto, colorBotonAccentoRojo, OnAlternarModoEliminar, colorEsAccento: true);
+            botonEliminarScriptRef = botonEliminarScript.GetComponent<Button>();
+            textoBotonEliminarScript = botonEliminarScript.transform.Find("Titulo").GetComponent<Text>();
+
+            CrearBotonAccionSlot(barra.transform, "BotonIniciarPartida", "INICIAR", "PARTIDA",
+                4, totalSlots, y, alto, colorBotonAccentoVerde, OnIniciarPartida, colorEsAccento: true);
+
+            ConstruirControlTamanoTableroCompacto(barra.transform, 5, totalSlots, y, alto);
         }
 
         // Control de tamaño de tablero: mismo "slot" que un botón más de la fila de
         // arriba (6to lugar, a la derecha de INICIAR PARTIDA), con una flecha "-" a la
         // izquierda, un ícono de grilla 3x3 (representa el tablero) en el centro, el
-        // "N x N" arriba del ícono, y una flecha "+" a la derecha.
-        private void ConstruirControlTamanoTableroCompacto(Transform barra, float x, float y, float ancho, float alto)
+        // "N x N" arriba del ícono (con texto más grande), y una flecha "+" a la derecha.
+        private void ConstruirControlTamanoTableroCompacto(Transform barra, int indice, int totalSlots, float y, float alto)
         {
-            var contenedor = CrearRect(barra, "ControlTamanoTablero", new Vector2(x, y), new Vector2(ancho, alto), colorPanel);
+            float anchorMinX = (float)indice / totalSlots;
+            float anchorMaxX = (float)(indice + 1) / totalSlots;
+            float offsetIzq = indice == 0 ? MARGEN : GAP / 2f;
+            float offsetDer = indice == totalSlots - 1 ? -MARGEN : -GAP / 2f;
+
+            var contenedor = CrearRectElastico(barra, "ControlTamanoTablero",
+                new Vector2(anchorMinX, 1), new Vector2(anchorMaxX, 1),
+                new Vector2(offsetIzq, -(y + alto)), new Vector2(offsetDer, -y),
+                colorPanel, null);
 
             const float ladoFlecha = 34f;
 
@@ -349,24 +369,30 @@ namespace TanksGame.UI
             CrearTexto(botonMenos.transform, "Texto", "-", Vector2.zero, new Vector2(ladoFlecha, ladoFlecha),
                 20, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
-            var botonMas = CrearRect(contenedor.transform, "BotonMas",
-                new Vector2(ancho - ladoFlecha - 4, (alto - ladoFlecha) / 2f), new Vector2(ladoFlecha, ladoFlecha), colorBoton);
+            // Anclado a la esquina superior derecha del propio slot (en vez de
+            // depender de un "ancho" fijo), así funciona con cualquier ancho de slot.
+            var botonMas = CrearRectAncladoEsquina(contenedor.transform, "BotonMas",
+                new Vector2(1, 1), 4, (alto - ladoFlecha) / 2f, ladoFlecha, ladoFlecha, colorBoton, null);
             var btnMas = botonMas.AddComponent<Button>();
             btnMas.targetGraphic = botonMas.GetComponent<Image>();
             btnMas.onClick.AddListener(() => CambiarTamanoTablero(1));
             CrearTexto(botonMas.transform, "Texto", "+", Vector2.zero, new Vector2(ladoFlecha, ladoFlecha),
                 20, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
-            textoTamanoTablero = CrearTexto(contenedor.transform, "TextoTamano", "7 x 7",
-                new Vector2(0, 8), new Vector2(ancho, 20), 13, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            // Texto "N x N": ahora más grande (16, antes 13) y estirado/centrado a
+            // todo el ancho del slot en vez de un ancho fijo.
+            textoTamanoTablero = CrearTextoElastico(contenedor.transform, "TextoTamano", "7 x 7",
+                new Vector2(0, 1), new Vector2(1, 1),
+                new Vector2(0, -(8 + 26)), new Vector2(0, -8),
+                16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
-            const float ladoIcono = 44f;
-            CrearIconoGrid3x3(contenedor.transform, new Vector2((ancho - ladoIcono) / 2f, 32), ladoIcono);
+            const float ladoIcono = 48f;
+            CrearIconoGrid3x3Centrado(contenedor.transform, 38f, ladoIcono);
         }
 
-        // Ícono de grilla 3x3 (representa visualmente "el tablero") hecho con 9
-        // cuadraditos, sin necesitar ninguna imagen.
-        private void CrearIconoGrid3x3(Transform padre, Vector2 posicion, float lado)
+        // Ícono de grilla 3x3 (representa visualmente "el tablero"), centrado
+        // horizontalmente dentro de su padre (sin depender de un ancho fijo).
+        private void CrearIconoGrid3x3Centrado(Transform padre, float yDesdeArriba, float lado)
         {
             const int celdas = 3;
             const float gap = 3f;
@@ -376,10 +402,20 @@ namespace TanksGame.UI
             {
                 for (int columna = 0; columna < celdas; columna++)
                 {
-                    var pos = new Vector2(
-                        posicion.x + columna * (tamanoCelda + gap),
-                        posicion.y + fila * (tamanoCelda + gap));
-                    CrearRect(padre, $"CeldaIcono_{fila}_{columna}", pos, new Vector2(tamanoCelda, tamanoCelda), colorAcentoMilitar);
+                    float offsetXDesdeCentro = (columna - 1) * (tamanoCelda + gap);
+                    float offsetYDesdeArriba = yDesdeArriba + fila * (tamanoCelda + gap);
+
+                    var go = new GameObject($"CeldaIcono_{fila}_{columna}");
+                    go.transform.SetParent(padre, false);
+                    var img = go.AddComponent<Image>();
+                    img.color = colorAcentoMilitar;
+
+                    var rect = go.GetComponent<RectTransform>();
+                    rect.anchorMin = new Vector2(0.5f, 1f);
+                    rect.anchorMax = new Vector2(0.5f, 1f);
+                    rect.pivot = new Vector2(0.5f, 1f);
+                    rect.sizeDelta = new Vector2(tamanoCelda, tamanoCelda);
+                    rect.anchoredPosition = new Vector2(offsetXDesdeCentro, -offsetYDesdeArriba);
                 }
             }
         }
@@ -577,17 +613,17 @@ namespace TanksGame.UI
             AgregarFranjaAcento(panel.transform, 50f);
             AgregarBracketsDeEsquina(panel.transform, colorAcentoMilitar);
 
-            // Botón "Eliminar script de tanque": arranca oculto (recién se activa
-            // cuando ya hay al menos un tanque guardado). Al tocarlo, alterna el modo
-            // que muestra el "-" en cada fila del Historial.
-            var botonEliminarScript = CrearRectAncladoEsquina(panel.transform, "BotonEliminarScriptTanque",
+            // "BORRAR SCRIPT": antes era uno de los 5 botones principales de la barra
+            // superior; ahora vive acá, arriba a la derecha de la Terminal. Se
+            // intercambió de lugar con "ELIMINAR SCRIPT DE TANQUE", que ahora es un
+            // botón principal en la barra superior (ver ConstruirBarraSuperior).
+            var botonBorrarScript = CrearRectAncladoEsquina(panel.transform, "BotonBorrarScript",
                 new Vector2(1, 1), 15, 15, 240, 30, colorBotonAccentoRojo, null);
-            botonEliminarScriptRef = botonEliminarScript.AddComponent<Button>();
-            botonEliminarScriptRef.targetGraphic = botonEliminarScript.GetComponent<Image>();
-            botonEliminarScriptRef.onClick.AddListener(OnAlternarModoEliminar);
-            textoBotonEliminarScript = CrearTexto(botonEliminarScript.transform, "Texto", "ELIMINAR SCRIPT DE TANQUE",
-                Vector2.zero, new Vector2(240, 30), 11, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
-            botonEliminarScript.SetActive(false);
+            var btnBorrarScript = botonBorrarScript.AddComponent<Button>();
+            btnBorrarScript.targetGraphic = botonBorrarScript.GetComponent<Image>();
+            btnBorrarScript.onClick.AddListener(OnBorrarScript);
+            CrearTexto(botonBorrarScript.transform, "Texto", "BORRAR SCRIPT",
+                Vector2.zero, new Vector2(240, 30), 12, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
             var areaCodigo = CrearRectElasticoLocal(panel.transform, "AreaCodigo",
                 new Vector2(0, 0), new Vector2(1, 1),
@@ -1161,8 +1197,12 @@ namespace TanksGame.UI
         }
 
         // ------------------------------------------------------------------
-        // OVERLAY DE CONFIRMACIÓN (usado por "Borrar script").
+        // OVERLAY DE CONFIRMACIÓN GENÉRICO (usado por "Borrar script" en la
+        // Terminal y por "Limpiar historial" en el panel de Historial).
         // ------------------------------------------------------------------
+
+        private Text textoMensajeConfirmarBorrado;
+        private Action accionConfirmarBorrado;
 
         private void ConstruirOverlayConfirmarBorrado(Transform padre)
         {
@@ -1177,13 +1217,17 @@ namespace TanksGame.UI
             cajaRect.pivot = new Vector2(0.5f, 0.5f);
             cajaRect.anchoredPosition = Vector2.zero;
 
-            CrearTexto(caja.transform, "Mensaje", "¿Borrar todo el contenido del editor?",
+            textoMensajeConfirmarBorrado = CrearTexto(caja.transform, "Mensaje", "¿Borrar todo el contenido del editor?",
                 new Vector2(20, 20), new Vector2(380, 60), 18, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
             var botonSi = CrearRect(caja.transform, "BotonSi", new Vector2(30, 110), new Vector2(170, 50), colorBotonAccentoRojo);
             var siBtn = botonSi.AddComponent<Button>();
             siBtn.targetGraphic = botonSi.GetComponent<Image>();
-            siBtn.onClick.AddListener(ConfirmarBorrado);
+            siBtn.onClick.AddListener(() =>
+            {
+                accionConfirmarBorrado?.Invoke();
+                overlayConfirmarBorrado.SetActive(false);
+            });
             CrearTexto(botonSi.transform, "Texto", "SÍ, BORRAR", Vector2.zero, new Vector2(170, 50),
                 16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
@@ -1195,6 +1239,15 @@ namespace TanksGame.UI
                 16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
             overlayConfirmarBorrado.SetActive(false);
+        }
+
+        // Abre el overlay de confirmación genérico con un mensaje y una acción a
+        // ejecutar si el usuario confirma tocando "SÍ, BORRAR".
+        private void AbrirOverlayConfirmarBorrado(string mensaje, Action alConfirmar)
+        {
+            textoMensajeConfirmarBorrado.text = mensaje;
+            accionConfirmarBorrado = alConfirmar;
+            overlayConfirmarBorrado.SetActive(true);
         }
 
         // ------------------------------------------------------------------
@@ -1521,6 +1574,34 @@ namespace TanksGame.UI
             return texto;
         }
 
+        // Variante "elástica" de CrearTexto: en vez de un tamaño fijo en píxeles, se
+        // ancla con fracciones de sus padre (anchorMin/anchorMax) más un offset en
+        // píxeles, para que el texto se estire y quede centrado sin importar el
+        // ancho real de su contenedor (usado en los botones y controles de la barra
+        // superior, cuyo ancho ahora es una fracción del ancho de pantalla).
+        private Text CrearTextoElastico(Transform padre, string nombre, string contenido,
+            Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax,
+            int fontSize, FontStyle estilo, TextAnchor alineacion, Color color)
+        {
+            var go = new GameObject(nombre);
+            go.transform.SetParent(padre, false);
+            var texto = go.AddComponent<Text>();
+            texto.text = contenido;
+            texto.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            texto.fontSize = fontSize;
+            texto.fontStyle = estilo;
+            texto.alignment = alineacion;
+            texto.color = color;
+
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.offsetMin = offsetMin;
+            rect.offsetMax = offsetMax;
+
+            return texto;
+        }
+
         private const float ANCHO_NUMEROS_LINEA = 45f;
 
         private InputField CrearCampoTextoMultilineaConScroll(Transform padre, string nombre, string textoInicial, ScrollRect scrollRect)
@@ -1697,24 +1778,43 @@ namespace TanksGame.UI
             return campo;
         }
 
-        private void CrearBotonAccion(Transform padre, string nombre, string titulo, string subtitulo,
-            Vector2 posicion, Vector2 tamano, Color color, UnityEngine.Events.UnityAction accion, bool colorEsAccento = false)
+        // Botón de acción "slot" de la barra superior: en vez de un ancho fijo en
+        // píxeles, ocupa una fracción (1/totalSlots) del ancho total de la barra, así
+        // los 5 botones + el control de tablero siempre abarcan TODO el ancho
+        // disponible, sea cual sea la resolución de pantalla.
+        private GameObject CrearBotonAccionSlot(Transform barra, string nombre, string titulo, string subtitulo,
+            int indice, int totalSlots, float y, float alto, Color color, UnityEngine.Events.UnityAction accion,
+            bool colorEsAccento = false)
         {
+            float anchorMinX = (float)indice / totalSlots;
+            float anchorMaxX = (float)(indice + 1) / totalSlots;
+            float offsetIzq = indice == 0 ? MARGEN : GAP / 2f;
+            float offsetDer = indice == totalSlots - 1 ? -MARGEN : -GAP / 2f;
+
             var go = colorEsAccento
-                ? CrearRect(padre, nombre, posicion, tamano, color)
-                : CrearRect(padre, nombre, posicion, tamano, color, spriteFondoBoton);
+                ? CrearRectElastico(barra, nombre, new Vector2(anchorMinX, 1), new Vector2(anchorMaxX, 1),
+                    new Vector2(offsetIzq, -(y + alto)), new Vector2(offsetDer, -y), color, null)
+                : CrearRectElastico(barra, nombre, new Vector2(anchorMinX, 1), new Vector2(anchorMaxX, 1),
+                    new Vector2(offsetIzq, -(y + alto)), new Vector2(offsetDer, -y), color, spriteFondoBoton);
+
             var boton = go.AddComponent<Button>();
             boton.targetGraphic = go.GetComponent<Image>();
             boton.onClick.AddListener(accion);
 
-            CrearTexto(go.transform, "Titulo", titulo, new Vector2(15, 10), new Vector2(tamano.x - 30, 30),
+            CrearTextoElastico(go.transform, "Titulo", titulo,
+                new Vector2(0, 1), new Vector2(1, 1),
+                new Vector2(15, -(10 + 30)), new Vector2(-15, -10),
                 18, FontStyle.Bold, TextAnchor.MiddleLeft, colorTexto);
 
             if (!string.IsNullOrEmpty(subtitulo))
             {
-                CrearTexto(go.transform, "Subtitulo", subtitulo, new Vector2(15, 42), new Vector2(tamano.x - 30, 24),
+                CrearTextoElastico(go.transform, "Subtitulo", subtitulo,
+                    new Vector2(0, 1), new Vector2(1, 1),
+                    new Vector2(15, -(42 + 24)), new Vector2(-15, -42),
                     13, FontStyle.Normal, TextAnchor.MiddleLeft, colorTextoSecundario);
             }
+
+            return go;
         }
 
         private void CrearFlecha(Transform padre, string nombre, string simbolo, Vector2 posicion, UnityEngine.Events.UnityAction accion)
@@ -1804,14 +1904,13 @@ namespace TanksGame.UI
 
         private void OnBorrarScript()
         {
-            overlayConfirmarBorrado.SetActive(true);
+            AbrirOverlayConfirmarBorrado("¿Borrar todo el contenido del editor?", ConfirmarBorrado);
         }
 
         private void ConfirmarBorrado()
         {
             campoEditor.text = "";
             ActualizarEditorTrasCambio();
-            overlayConfirmarBorrado.SetActive(false);
             ActualizarTextoEstado("LISTO", esError: false);
         }
 
@@ -1900,6 +1999,11 @@ namespace TanksGame.UI
 
         private void OnLimpiarHistorial()
         {
+            AbrirOverlayConfirmarBorrado("¿Borrar todo el historial de scripts programados?", ConfirmarLimpiarHistorial);
+        }
+
+        private void ConfirmarLimpiarHistorial()
+        {
             historial.Clear();
             ReconstruirListaHistorial();
         }
@@ -1916,19 +2020,21 @@ namespace TanksGame.UI
         // ELIMINAR SCRIPT DE TANQUE / TAMAÑO DE TABLERO.
         // ------------------------------------------------------------------
 
-        // Botón visible en cuanto hay al menos 1 tanque guardado. Al tocarlo, alterna
-        // un modo donde cada fila del Historial muestra un "-" para borrar ese tanque
-        // en particular (ver CrearItemHistorial / OnEliminarTanque).
+        // Ahora que "ELIMINAR SCRIPT DE TANQUE" es uno de los botones principales de
+        // la barra superior (no un botón que aparece/desaparece), en vez de
+        // ocultarlo se lo deshabilita (interactable) mientras no haya tanques
+        // programados, para no dejar un hueco vacío en la fila de botones.
         private void ActualizarBotonEliminarScript()
         {
             if (botonEliminarScriptRef == null) return;
 
             bool hayTanques = scriptsPorTanque.Count > 0;
-            botonEliminarScriptRef.gameObject.SetActive(hayTanques);
+            botonEliminarScriptRef.interactable = hayTanques;
 
             if (!hayTanques) modoEliminarActivo = false;
 
-            textoBotonEliminarScript.text = modoEliminarActivo ? "LISTO" : "ELIMINAR SCRIPT DE TANQUE";
+            if (textoBotonEliminarScript != null)
+                textoBotonEliminarScript.text = modoEliminarActivo ? "LISTO" : "ELIMINAR SCRIPT DE TANQUE";
         }
 
         private void OnAlternarModoEliminar()
