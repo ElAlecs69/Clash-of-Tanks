@@ -175,6 +175,12 @@ namespace TanksGame.Gameplay
 
             RefrescarVista();
 
+            if (vistaTablero != null)
+            {
+                vistaTablero.ActualizarMinas(board.MinePositions());
+                vistaTablero.ReproducirDisparos(turnManager.LastRoundShots);
+            }
+
             if (result == GameResult.PlayerWins)
             {
                 var ganador = turnManager.AliveTanks().First();
@@ -192,31 +198,73 @@ namespace TanksGame.Gameplay
         {
             if (vistaTablero == null) return;
 
+            // Se usa la sobrecarga con vida (Mathf.RoundToInt(a.Tank.Health))
+            // en vez de la de 4 elementos: así BoardView puede mostrar el
+            // estado de daño real de cada tanque (chapa quemada a partir de
+            // 50% y volcado/incinerado al llegar a 0%) en vez de asumir
+            // siempre 100% de vida.
             var datos = agents.Select(a =>
-                (playerId: a.Tank.PlayerId, posicion: a.Tank.Position, vivo: a.Tank.IsAlive, skin: a.Skin));
+                (playerId: a.Tank.PlayerId, posicion: a.Tank.Position, vivo: a.Tank.IsAlive,
+                 vidaPorcentaje: Mathf.RoundToInt(a.Tank.Health), skin: a.Skin));
 
             vistaTablero.ActualizarTanques(datos);
         }
+        // El multiplicador fijo (x1.6) que había antes no tenía en cuenta el
+        // campo de visión real de la cámara ni el aspecto de pantalla, así que
+        // acertaba más o menos para un tamaño de tablero concreto y se quedaba
+        // corto en otros (por ejemplo 20x20, que quedaba cortado por los
+        // bordes). Ahora se calcula la distancia mínima real, con trigonometría,
+        // para que el círculo que envuelve todo el tablero entre en el cono de
+        // visión de la cámara, tanto en vertical como en horizontal según su
+        // relación de aspecto.
         private void CentrarCamaraEnTablero()
         {
-            var camara = FindFirstObjectByType<OrbitZoomCamera>();
-            if (camara == null) return;
+            var camaraOrbit = FindFirstObjectByType<OrbitZoomCamera>();
+            if (camaraOrbit == null) return;
 
             float lado = vistaTablero.tamanoCelda;
             var centro = new Vector3((board.Width - 1) * lado * 0.5f, 0f,
                 (board.Height - 1) * lado * 0.5f);
-            camara.PanTo(centro);
+            camaraOrbit.PanTo(centro);
 
-            float distanciaNecesaria = Mathf.Max(board.Width, board.Height) * lado * 1.6f;
+            // Radio de la circunferencia que envuelve el tablero completo,
+            // con un 15% extra de margen para que no quede pegado al borde
+            // de la pantalla.
+            float radioTablero = 0.5f * lado *
+                Mathf.Sqrt(board.Width * board.Width + board.Height * board.Height) * 1.15f;
+
+            var camaraUnity = camaraOrbit.GetComponent<Camera>();
+            float distanciaNecesaria;
+
+            if (camaraUnity != null && !camaraUnity.orthographic)
+            {
+                // Distancia mínima para que el radio entre en el FOV vertical...
+                float mitadFovVerticalRad = camaraUnity.fieldOfView * 0.5f * Mathf.Deg2Rad;
+                float distanciaVertical = radioTablero / Mathf.Tan(mitadFovVerticalRad);
+
+                // ...y distancia mínima para que entre en el FOV horizontal
+                // (que depende del aspecto de pantalla: en una ventana ancha
+                // sobra horizontal, pero en una angosta puede ser el límite).
+                float mitadFovHorizontalRad = Mathf.Atan(Mathf.Tan(mitadFovVerticalRad) * camaraUnity.aspect);
+                float distanciaHorizontal = radioTablero / Mathf.Tan(mitadFovHorizontalRad);
+
+                distanciaNecesaria = Mathf.Max(distanciaVertical, distanciaHorizontal);
+            }
+            else
+            {
+                // Cámara ortográfica u OrbitZoomCamera sin Camera propia:
+                // se conserva el cálculo anterior como respaldo razonable.
+                distanciaNecesaria = Mathf.Max(board.Width, board.Height) * lado * 1.6f;
+            }
 
             // Si el tablero pedido (ej. 20x20) necesita alejarse más de lo que la
             // cámara tiene configurado como límite, hay que subir ese límite --
             // si no, un tablero grande queda cortado aunque el cálculo de arriba
             // esté bien, porque el Clamp de abajo lo topa antes de tiempo.
-            if (distanciaNecesaria > camara.maxDistance)
-                camara.maxDistance = distanciaNecesaria;
+            if (distanciaNecesaria > camaraOrbit.maxDistance)
+                camaraOrbit.maxDistance = distanciaNecesaria;
 
-            camara.distance = Mathf.Clamp(distanciaNecesaria, camara.minDistance, camara.maxDistance);
+            camaraOrbit.distance = Mathf.Clamp(distanciaNecesaria, camaraOrbit.minDistance, camaraOrbit.maxDistance);
         }
     }
 }

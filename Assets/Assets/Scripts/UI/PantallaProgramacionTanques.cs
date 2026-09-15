@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
@@ -115,7 +116,6 @@ namespace TanksGame.UI
         private ScrollRect scrollTerminal;
         private Text textoEstado;
         private Transform contenedorListaHistorial;
-        private RectTransform panelHistorialRect;
         private GameObject overlayConfirmarBorrado;
         private AudioSource audioSourceMusica;
 
@@ -207,13 +207,44 @@ namespace TanksGame.UI
         private Image imagenBanderaPreview;
 
         private Transform tanquePreviewInstancia;
+        private GameObject escenarioPreview;
         private RenderTexture renderTexturaPreview;
+        private readonly Dictionary<string, Sprite> spritesPatronCache = new Dictionary<string, Sprite>();
 
         private class EntradaHistorial
         {
             public string nombre;
             public string fechaHora;
             public string contenido;
+        }
+
+        private void OnDestroy()
+        {
+            if (renderTexturaPreview != null)
+            {
+                renderTexturaPreview.Release();
+                Destroy(renderTexturaPreview);
+                renderTexturaPreview = null;
+            }
+
+            if (escenarioPreview != null)
+            {
+                Destroy(escenarioPreview);
+                escenarioPreview = null;
+            }
+
+            foreach (var sprite in spritesPatronCache.Values)
+            {
+                if (sprite != null)
+                {
+                    var texture = sprite.texture;
+                    Destroy(sprite);
+                    if (texture != null)
+                        Destroy(texture);
+                }
+            }
+
+            spritesPatronCache.Clear();
         }
 
         private void Start()
@@ -237,17 +268,16 @@ namespace TanksGame.UI
         }
 
         private void Update()
-        {
-            // Mientras estamos reposicionando el cursor de forma programática (tras insertar
-            // una instrucción), ignoramos la lectura de campoEditor.caretPosition: el InputField
-            // puede estar reactivándose internamente todavía y devolver una posición transitoria
-            // equivocada (fin del texto, selección, etc.) que pisaría nuestro cálculo.
-            if (!sincronizandoCursorProgramaticamente && campoEditor != null && campoEditor.isFocused)
-                ultimaPosicionCursorConocida = campoEditor.caretPosition;
+{
+    if (!sincronizandoCursorProgramaticamente && campoEditor != null && campoEditor.isFocused)
+    {
+        ultimaPosicionCursorConocida = campoEditor.caretPosition;
+        AsegurarCursorVisible();
+    }
 
-            if (rotarTanquePreview && tanquePreviewInstancia != null)
-                tanquePreviewInstancia.Rotate(Vector3.up, velocidadRotacionPreview * Time.deltaTime, Space.World);
-        }
+    if (rotarTanquePreview && tanquePreviewInstancia != null)
+        tanquePreviewInstancia.Rotate(Vector3.up, velocidadRotacionPreview * Time.deltaTime, Space.World);
+}
 
         private void ConstruirUI()
         {
@@ -348,12 +378,6 @@ namespace TanksGame.UI
                 1, totalSlots, y, alto, colorBoton, OnCargarScript);
             CrearBotonAccionSlot(barra.transform, "BotonVolverMenu", "MENÚ DE INICIO", "VOLVER",
                 2, totalSlots, y, alto, colorBotonAccentoRojo, OnVolverAlMenu, colorEsAccento: true);
-
-            // Antes acá vivía "BORRAR SCRIPT" y "ELIMINAR SCRIPT DE TANQUE" era un
-            // botón chico arriba a la derecha de la Terminal. Se intercambiaron de
-            // lugar: ahora "ELIMINAR SCRIPT DE TANQUE" es uno de los 5 botones
-            // principales, y "BORRAR SCRIPT" pasó al rincón de la Terminal (ver
-            // ConstruirPanelTerminal).
             var botonEliminarScript = CrearBotonAccionSlot(barra.transform, "BotonEliminarScriptTanque",
                 "ELIMINAR SCRIPT DE TANQUE", "",
                 3, totalSlots, y, alto, colorBotonAccentoRojo, OnAlternarModoEliminar, colorEsAccento: true);
@@ -453,7 +477,6 @@ namespace TanksGame.UI
                 new Vector2(0, 0), new Vector2(0, 1),
                 new Vector2(MARGEN, MARGEN), new Vector2(MARGEN + ANCHO_HISTORIAL, -(ALTURA_BARRA + GAP)),
                 colorPanel, spriteMarcoPanel);
-            panelHistorialRect = panel.GetComponent<RectTransform>();
 
             CrearTexto(panel.transform, "TituloHistorial", "HISTORIAL DE SCRIPTS",
                 new Vector2(15, 15), new Vector2(295, 30), 20, FontStyle.Bold, TextAnchor.MiddleLeft, colorBotonAccentoRojo);
@@ -603,56 +626,131 @@ namespace TanksGame.UI
         }
 
         private void InsertarEnEditor(string fragmento)
+{
+    if (campoEditor == null || string.IsNullOrEmpty(fragmento)) return;
+
+    string texto = campoEditor.text;
+    int posicion = Mathf.Clamp(ObtenerCursorActual(), 0, texto.Length);
+
+    // Regla permanente: una instrucción insertada con un botón siempre arranca su propia
+    // línea. Solo se omite el salto en dos casos posicionales (no de estado):
+    //  - la línea actual está vacía hasta el cursor (incluye el cuerpo indentado de un IF
+    //    y el documento vacío): ya estamos en una línea libre, no hace falta otra.
+    //  - el cursor está justo antes de un ")": estamos dentro de la condición de un IF,
+    //    donde un salto de línea la partiría al medio.
+    int inicioLinea = posicion > 0 ? texto.LastIndexOf('\n', posicion - 1) + 1 : 0;
+    string antesEnLinea = texto.Substring(inicioLinea, posicion - inicioLinea);
+
+    bool lineaLibre = string.IsNullOrWhiteSpace(antesEnLinea);
+    bool dentroDeCondicion = posicion < texto.Length && texto[posicion] == ')';
+
+    string prefijo = (lineaLibre || dentroDeCondicion) ? "" : "\n";
+
+    campoEditor.text = texto.Insert(posicion, prefijo + fragmento);
+
+    int indiceParentesis = fragmento.IndexOf("( )", StringComparison.Ordinal);
+    int nuevaPosicion = indiceParentesis >= 0
+        ? posicion + prefijo.Length + indiceParentesis + 2
+        : posicion + prefijo.Length + fragmento.Length;
+
+    ActualizarEditorSinMoverCursor();
+    ultimaPosicionCursorConocida = nuevaPosicion;
+
+    FijarCursorEnEditor(nuevaPosicion);
+}
+
+// Punto de entrada único para reposicionar el cursor tras cualquier edición nuestra
+// (botón de instrucción, dirección, retroceso, Enter con indentación).
+private void FijarCursorEnEditor(int posicion)
+{
+    if (campoEditor.isFocused)
+    {
+        // Ya estaba enfocado (típicamente: venimos de una tecla, no de un botón). Reactivar
+        // igual con ActivateInputField() dispara la misma reactivación diferida que salta el
+        // cursor al final del texto por un instante — así que si ya está enfocado, alcanza
+        // con fijar la posición directamente, sin corrutina ni espera.
+        int posicionClamp = Mathf.Clamp(posicion, 0, campoEditor.text.Length);
+        campoEditor.selectionAnchorPosition = posicionClamp;
+        campoEditor.selectionFocusPosition = posicionClamp;
+        campoEditor.caretPosition = posicionClamp;
+        ultimaPosicionCursorConocida = posicionClamp;
+        AsegurarCursorVisible();
+        return;
+    }
+
+    StopAllCoroutines();
+    StartCoroutine(EnfocarEditorYFijarCursor(posicion));
+}
+
+// Hace scroll dentro de la terminal lo mínimo necesario para que la línea del cursor
+// quede visible — un InputField normal no hace esto solo dentro de un ScrollRect.
+private void AsegurarCursorVisible()
+{
+    if (scrollTerminal == null || campoEditor == null || contenedorEditorRect == null) return;
+
+    string texto = campoEditor.text;
+    int caret = Mathf.Clamp(ultimaPosicionCursorConocida, 0, texto.Length);
+
+    int totalLineas = 1, lineaCaret = 0;
+    for (int i = 0; i < texto.Length; i++)
+    {
+        if (texto[i] != '\n') continue;
+        totalLineas++;
+        if (i < caret) lineaCaret++;
+    }
+
+    float alturaContenido = contenedorEditorRect.rect.height;
+    float alturaViewport = scrollTerminal.viewport.rect.height;
+    float maxScrollPx = Mathf.Max(0f, alturaContenido - alturaViewport);
+    if (maxScrollPx <= 0f || totalLineas <= 0) return;
+
+    float alturaLinea = alturaContenido / totalLineas;
+    float topLinea = lineaCaret * alturaLinea;
+    float bottomLinea = topLinea + alturaLinea;
+
+    // Convención REAL de Unity: verticalNormalizedPosition 1 = arriba del contenido,
+    // 0 = abajo. "scrollActualPx" es cuántos píxeles bajamos desde el tope.
+    float scrollActualPx = (1f - scrollTerminal.verticalNormalizedPosition) * maxScrollPx;
+
+    float nuevoScrollPx = scrollActualPx;
+    if (topLinea < scrollActualPx)
+        nuevoScrollPx = topLinea;
+    else if (bottomLinea > scrollActualPx + alturaViewport)
+        nuevoScrollPx = bottomLinea - alturaViewport;
+
+    nuevoScrollPx = Mathf.Clamp(nuevoScrollPx, 0f, maxScrollPx);
+    scrollTerminal.verticalNormalizedPosition = 1f - (nuevoScrollPx / maxScrollPx);
+}
+
+private IEnumerator EnfocarEditorYFijarCursor(int posicion)
+{
+    sincronizandoCursorProgramaticamente = true;
+    try
+    {
+        campoEditor.ActivateInputField();
+
+        int intentos = 0;
+        while (!campoEditor.isFocused && intentos < 6)
         {
-            if (campoEditor == null || string.IsNullOrEmpty(fragmento)) return;
-
-            // El editor se comporta como un editor normal: los botones insertan exactamente
-            // donde está el cursor. No agregamos saltos de línea ni indentación automática.
-            string texto = campoEditor.text;
-            int posicion = Mathf.Clamp(ObtenerCursorActual(), 0, texto.Length);
-
-            campoEditor.text = texto.Insert(posicion, fragmento);
-
-            // Única comodidad especial: si se insertó una instrucción con "( )",
-            // dejamos el cursor dentro de los paréntesis para continuar escribiendo ahí.
-            int indiceParentesis = fragmento.IndexOf("( )", StringComparison.Ordinal);
-            int nuevaPosicion = indiceParentesis >= 0
-                ? posicion + indiceParentesis + 2
-                : posicion + fragmento.Length;
-
-            ActualizarEditorSinMoverCursor();
-            ultimaPosicionCursorConocida = nuevaPosicion;
-
-            StopAllCoroutines();
-            StartCoroutine(EnfocarEditorYFijarCursor(nuevaPosicion));
-        }
-
-        private IEnumerator EnfocarEditorYFijarCursor(int posicion)
-        {
-            sincronizandoCursorProgramaticamente = true;
-            campoEditor.ActivateInputField();
-
-            // La reactivación interna del InputField ocurre en un frame posterior (no es
-            // inmediata). Esperamos a que quede realmente enfocado, con un pequeño margen de
-            // seguridad, y recién ahí fijamos la posición UNA sola vez y soltamos el control:
-            // si seguimos forzando la posición frame a frame, le ganamos también a las teclas
-            // (flechas, Enter) que el usuario presione justo después de hacer clic.
-            int intentos = 0;
-            while (!campoEditor.isFocused && intentos < 6)
-            {
-                yield return null;
-                intentos++;
-            }
             yield return null;
-
-            int posicionClamp = Mathf.Clamp(posicion, 0, campoEditor.text.Length);
-            campoEditor.selectionAnchorPosition = posicionClamp;
-            campoEditor.selectionFocusPosition = posicionClamp;
-            campoEditor.caretPosition = posicionClamp;
-
-            ultimaPosicionCursorConocida = posicionClamp;
-            sincronizandoCursorProgramaticamente = false;
+            intentos++;
         }
+        yield return null;
+
+        int posicionClamp = Mathf.Clamp(posicion, 0, campoEditor.text.Length);
+        campoEditor.selectionAnchorPosition = posicionClamp;
+        campoEditor.selectionFocusPosition = posicionClamp;
+        campoEditor.caretPosition = posicionClamp;
+
+        ultimaPosicionCursorConocida = posicionClamp;
+    }
+    finally
+    {
+        sincronizandoCursorProgramaticamente = false;
+    }
+    AsegurarCursorVisible();
+}
+
 
         // ------------------------------------------------------------------
         // PANEL CENTRAL: terminal / editor de script.
@@ -673,11 +771,6 @@ namespace TanksGame.UI
 
             AgregarFranjaAcento(panel.transform, 50f);
             AgregarBracketsDeEsquina(panel.transform, colorAcentoMilitar);
-
-            // "BORRAR SCRIPT": antes era uno de los 5 botones principales de la barra
-            // superior; ahora vive acá, arriba a la derecha de la Terminal. Se
-            // intercambió de lugar con "ELIMINAR SCRIPT DE TANQUE", que ahora es un
-            // botón principal en la barra superior (ver ConstruirBarraSuperior).
             var botonBorrarScript = CrearRectAncladoEsquina(panel.transform, "BotonBorrarScript",
                 new Vector2(1, 1), 15, 15, 240, 30, colorBotonAccentoRojo, null);
             var btnBorrarScript = botonBorrarScript.AddComponent<Button>();
@@ -712,20 +805,16 @@ namespace TanksGame.UI
             btnGuardarTanque.targetGraphic = botonGuardarTanque.GetComponent<Image>();
             btnGuardarTanque.onClick.AddListener(OnGuardarScriptDelTanque);
 
-            var textoGuardarTanqueGo = new GameObject("Texto");
-            textoGuardarTanqueGo.transform.SetParent(botonGuardarTanque.transform, false);
-            textoBotonGuardarTanque = textoGuardarTanqueGo.AddComponent<Text>();
-            textoBotonGuardarTanque.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            textoBotonGuardarTanque.fontSize = 14;
-            textoBotonGuardarTanque.fontStyle = FontStyle.Bold;
-            textoBotonGuardarTanque.alignment = TextAnchor.MiddleCenter;
-            textoBotonGuardarTanque.color = colorTexto;
-            textoBotonGuardarTanque.text = "GUARDAR";
-            var textoGuardarTanqueRect = textoGuardarTanqueGo.GetComponent<RectTransform>();
-            textoGuardarTanqueRect.anchorMin = Vector2.zero;
-            textoGuardarTanqueRect.anchorMax = Vector2.one;
-            textoGuardarTanqueRect.offsetMin = Vector2.zero;
-            textoGuardarTanqueRect.offsetMax = Vector2.zero;
+            textoBotonGuardarTanque = CrearTexto(
+                botonGuardarTanque.transform, "Texto", "GUARDAR",
+                Vector2.zero, Vector2.zero, 14, FontStyle.Bold,
+                TextAnchor.MiddleCenter, colorTexto);
+
+            var textoRect = textoBotonGuardarTanque.rectTransform;
+            textoRect.anchorMin = Vector2.zero;
+            textoRect.anchorMax = Vector2.one;
+            textoRect.offsetMin = Vector2.zero;
+            textoRect.offsetMax = Vector2.zero;
 
             ConstruirPanelRosaVientos(panel.transform);
 
@@ -740,14 +829,14 @@ namespace TanksGame.UI
         }
 
         private void ActualizarEditorTrasCambio()
-        {
-            campoEditor.caretPosition = campoEditor.text.Length;
-            ultimaPosicionCursorConocida = campoEditor.caretPosition;
-            ActualizarEditorSinMoverCursor();
+{
+    campoEditor.caretPosition = campoEditor.text.Length;
+    ultimaPosicionCursorConocida = campoEditor.caretPosition;
+    ActualizarEditorSinMoverCursor();
 
-            if (scrollTerminal != null)
-                scrollTerminal.verticalNormalizedPosition = 0f;
-        }
+    if (scrollTerminal != null)
+        scrollTerminal.verticalNormalizedPosition = 1f; // antes era 0f — con la convención real de Unity, 1f es el tope
+}
 
         private void ActualizarEditorSinMoverCursor()
         {
@@ -832,34 +921,35 @@ namespace TanksGame.UI
             string nuevoTexto = texto.Remove(inicioABorrar, caret - inicioABorrar);
             campoEditor.text = nuevoTexto;
 
-            ActualizarEditorSinMoverCursor();
-            if (scrollTerminal != null)
-                scrollTerminal.verticalNormalizedPosition = 0f;
-
-            StopAllCoroutines();
-            StartCoroutine(EnfocarEditorYFijarCursor(inicioABorrar));
+            // Seguimos enfocados porque el Backspace nació dentro del InputField.
+            // No usamos una corrutina aquí: ActivateInputField() provoca un salto
+            // visual temporal del cursor antes de devolverlo a la posición correcta.
+            FijarCursorEnEditor(inicioABorrar);
         }
 
-        private static readonly string PatronInstruccionConParametro =
-            @"(" + string.Join("|", new[] { "MOV", "AMT", "RADAR", "MISIL" }.Select(Regex.Escape)) + @")\([NSEO]?\)$";
+        private string PatronInstruccionConParametro
+        {
+            get
+            {
+                var comandos = comandosQueRequierenDireccion
+                    .Where(c => !string.IsNullOrWhiteSpace(c))
+                    .Select(Regex.Escape);
+
+                return @"(?<!\w)(" + string.Join("|", comandos) + @")\([NSEO]?\)$";
+            }
+        }
+
         private static readonly string PatronPalabraClaveFinal =
             @"\b(" + string.Join("|", PalabrasClave.Select(Regex.Escape)) + @")$";
 
-        // Devuelve, dentro de "antesEnLinea" (el texto de la línea actual hasta el cursor),
-        // el índice donde empieza el "token" que el retroceso debe borrar completo de un golpe:
-        // una instrucción con parámetro ("MOV(N)"), una palabra clave completa ("IF", "MINA",
-        // "BUCLE", etc.), o -si nada de eso aplica- un solo símbolo (espacio, paréntesis, etc.).
         private int EncontrarInicioTokenABorrar(string antesEnLinea)
         {
-            var matchConParametro = Regex.Match(antesEnLinea, PatronInstruccionConParametro);
-            if (matchConParametro.Success)
-                return matchConParametro.Index;
+            var match = Regex.Match(antesEnLinea, PatronInstruccionConParametro);
+            if (match.Success)
+                return match.Index;
 
-            var matchPalabraClave = Regex.Match(antesEnLinea, PatronPalabraClaveFinal);
-            if (matchPalabraClave.Success)
-                return matchPalabraClave.Index;
-
-            return antesEnLinea.Length - 1;
+            match = Regex.Match(antesEnLinea, PatronPalabraClaveFinal);
+            return match.Success ? match.Index : antesEnLinea.Length - 1;
         }
 
         private Text CrearRectElasticoTextoInferior(Transform padre)
@@ -929,7 +1019,8 @@ namespace TanksGame.UI
 
         private void ConstruirVistaPrevia3D(Transform contenedorUI)
         {
-            var escenario = new GameObject("EscenarioPreviaTanque");
+            escenarioPreview = new GameObject("EscenarioPreviaTanque");
+            var escenario = escenarioPreview;
             escenario.transform.position = new Vector3(500f, 0f, 500f);
 
             var instancia = Instantiate(prefabTanquePreview, escenario.transform);
@@ -1182,6 +1273,10 @@ namespace TanksGame.UI
 
         private Sprite GenerarSpritePatron(int patronIndice, Color colorBase)
         {
+            string clave = $"{patronIndice}_{colorBase.r:F4}_{colorBase.g:F4}_{colorBase.b:F4}";
+            if (spritesPatronCache.TryGetValue(clave, out var spriteExistente))
+                return spriteExistente;
+
             const int n = 32;
             var textura = new Texture2D(n, n, TextureFormat.RGBA32, false)
             {
@@ -1218,7 +1313,9 @@ namespace TanksGame.UI
             }
             textura.Apply();
 
-            return Sprite.Create(textura, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f));
+            var sprite = Sprite.Create(textura, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f));
+            spritesPatronCache[clave] = sprite;
+            return sprite;
         }
 
         // Lee la personalización actualmente elegida en "PERSONALIZAR SKIN" (la
@@ -1284,11 +1381,11 @@ namespace TanksGame.UI
         private bool DebeExcluirseDeSkin(string nombreObjeto)
         {
             string nombreMin = nombreObjeto.ToLowerInvariant();
+
             foreach (var parte in partesExcluidasDeSkin)
-            {
                 if (!string.IsNullOrWhiteSpace(parte) && nombreMin.Contains(parte.ToLowerInvariant()))
                     return true;
-            }
+
             return false;
         }
 
@@ -1493,9 +1590,7 @@ namespace TanksGame.UI
 
             int nuevaPosicion = indice + reemplazo.Length;
             ActualizarEditorSinMoverCursor();
-
-            StopAllCoroutines();
-            StartCoroutine(EnfocarEditorYFijarCursor(nuevaPosicion));
+            FijarCursorEnEditor(nuevaPosicion);
         }
 
         // ------------------------------------------------------------------
@@ -1823,35 +1918,26 @@ namespace TanksGame.UI
 
             public override void OnUpdateSelected(BaseEventData eventData)
             {
-                if (!isFocused) return;
+                if (!isFocused)
+                    return;
 
-                bool backspaceProcesado = false;
-                var evt = new Event();
+                // Dejamos que Unity procese TODOS los eventos normalmente.
+                // Solo interceptamos Backspace porque el juego necesita borrar la
+                // instrucción completa en vez de un carácter.
+                //
+                // Es importante NO hacer Event.PopEvent() aquí. OnUpdateSelected()
+                // de InputField ya tiene su propio procesamiento interno de eventos
+                // y mantiene correctamente el estado usado por las flechas ↑/↓,
+                // Home/End, selección, Enter, etc.
+                if (Keyboard.current != null &&
+    Keyboard.current.backspaceKey.wasPressedThisFrame)
+{
+    onBackspacePorLinea?.Invoke();
+    eventData.Use();
+    return;
+}
 
-                while (Event.PopEvent(evt))
-                {
-                    bool esBackspace = evt.rawType == EventType.KeyDown &&
-                        (evt.keyCode == KeyCode.Backspace || evt.character == '\b');
-
-                    if (esBackspace)
-                    {
-                        // Solo Backspace tiene el comportamiento especial del juego.
-                        // Todo lo demás (texto, Enter, flechas, Home/End, Ctrl+C/V/X/A,
-                        // selección, etc.) lo procesa el InputField estándar de Unity.
-                        if (!backspaceProcesado)
-                        {
-                            backspaceProcesado = true;
-                            onBackspacePorLinea?.Invoke();
-                        }
-
-                        continue;
-                    }
-
-                    ProcessEvent(evt);
-                }
-
-                UpdateLabel();
-                eventData.Use();
+                base.OnUpdateSelected(eventData);
             }
         }
 

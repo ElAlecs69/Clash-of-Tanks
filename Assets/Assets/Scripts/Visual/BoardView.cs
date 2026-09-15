@@ -1,15 +1,21 @@
 using System.Collections.Generic;
 using UnityEngine;
 using TanksGame.Core;
+using TanksGame.Gameplay;
 
 namespace TanksGame.Visual
 {
-    // Genera una representación visual simple del tablero (Ancho x Alto) usando primitivas
-    // de Unity, y coloca un marcador por cada tanque. Es un placeholder gráfico para probar
-    // la lógica de juego antes de reemplazarlo por arte final (ver DESIGN_GUIDE.md).
+    // Vista del tablero (Ancho x Alto) más todo el paisaje que lo rodea, generado
+    // por procedimiento con primitivas y mallas propias.
+    //
+    // IDEA CLAVE DE ESTA VERSIÓN: el paisaje es una composición PROPORCIONAL al
+    // tablero. Todas las distancias, tamaños y alturas del decorado se miden en
+    // una unidad interna (_u) que crece con el lado del tablero, así que un
+    // tablero de 20x20 se ve rodeado igual que uno de 8x8 -- la sierra, el
+    // bosque y los edificios se quedan alrededor en vez de quedar sueltos a una
+    // distancia fija que en tableros grandes se ve rala.
     //
     // Uso: asigna este componente al campo "vistaTablero" del GameManager.
-    // Si dejas celdaPrefab / tanquePrefab vacíos, se generan cubos y cápsulas automáticamente.
     public class BoardView : MonoBehaviour
     {
         [Header("Prefabs opcionales (si se dejan vacíos, se generan primitivas)")]
@@ -27,64 +33,255 @@ namespace TanksGame.Visual
         [Header("Movimiento animado de los tanques")]
         [Tooltip("Segundos que tarda un tanque en desplazarse de una celda a la siguiente.")]
         public float duracionMovimiento = 0.35f;
+        [Tooltip("Velocidad de giro del tanque en grados por segundo. Antes el tanque giraba instantáneamente al iniciar cada movimiento (un salto brusco de orientación); con esto gira de forma gradual, como un vehículo real, incluso si eso hace que tarde un poco más en encarar la nueva dirección que en empezar a desplazarse.")]
+        public float velocidadGiroTanque = 260f;
 
-        [Header("Montañas alrededor del tablero (placeholder de arte)")]
-        public bool generarMontanas = true;
-        [Tooltip("Cuántos 'anillos' de montañas rodean el tablero.")]
-        [Min(1)] public int anillosDeMontanas = 2;
-        public Vector2 alturaMontanaMinMax = new Vector2(1.2f, 2.6f);
+        // NOTA: estos campos son nuevos (sustituyen a los márgenes en celdas de
+        // la versión anterior). Al cambiar de nombre, Unity los serializa con
+        // estos valores por defecto en vez de conservar los viejos de la escena.
+        [Header("Paisaje (todo escala solo con el tamaño del tablero)")]
+        public bool generarPaisaje = true;
+        [Tooltip("Multiplicador global del paisaje sobre el escalado automático. 1 = proporción calculada.")]
+        [Range(0.3f, 3f)] public float escalaPaisaje = 1f;
+        [Tooltip("Separación entre el borde del tablero y el PIE de la primera montaña. El radio de cada formación se suma aparte.")]
+        [Range(0f, 4f)] public float sierraPegadaAlTablero = 0.9f;
+        [Tooltip("Altura de la sierra respecto al tamaño del tablero.")]
+        [Range(0.3f, 2.5f)] public float alturaSierra = 1f;
+        [Tooltip("Cuántos manchones de bosque se plantan alrededor.")]
+        [Range(0.3f, 3f)] public float densidadBosque = 1f;
+        [Tooltip("Ancho del sector frontal (hacia la cámara) sin montañas, reservado al bosque.")]
+        [Range(0.15f, 0.9f)] public float aperturaFrontal = 0.42f;
+        [Tooltip("Distancia de los campamentos al borde del tablero (en unidades de paisaje).")]
+        [Range(0.5f, 5f)] public float distanciaEdificios = 1.9f;
+        [Tooltip("Niebla lejana: separa la sierra del fondo y da profundidad aérea.")]
+        public bool nieblaLejana = true;
 
-        // --- Biomas: solo cambia colores/paleta por ahora (sin texturas todavía).
-        // El selector de paisaje antes de la partida puede llamar a SetBioma() con
-        // uno de estos valores antes de Construir().
+        [Header("Edificios: prefabs propios (opcional)")]
+        [Tooltip("Si asignas prefabs aquí (por ejemplo los de un asset como ithappy Military_Free: tiendas, radios, torres), se usan en cada puesto en vez de las primitivas generadas por código. Se elige uno al azar por puesto. Déjalo vacío para seguir usando el campamento procedural.")]
+        public GameObject[] prefabsEdificios;
+        [Tooltip("Cuántos edificios de la lista se agrupan por puesto (1 = un edificio por puesto, como una tienda sola; 2-3 = un pequeño grupo).")]
+        [Range(1, 4)] public int edificiosPorPuesto = 1;
+        [Tooltip("Escala aplicada a cada prefab de edificio. Los assets de este tipo suelen venir modelados a un tamaño real (metros) mucho más grande que las primitivas de placeholder; baja este valor hasta que se vean del tamaño correcto junto al tablero. Prueba con algo como 0.1-0.3 como punto de partida.")]
+        public float escalaPrefabsEdificios = 0.2f;
+        [Tooltip("Escala adicional SOLO para los prefabs cuyo nombre contiene 'Tower' o 'Torre' (además de la escala general de arriba). Úsalo para bajar el tamaño de las torres sin afectar al resto de edificios.")]
+        public float escalaExtraTorres = 0.6f;
+
+        [Header("Avión / helicóptero decorativo")]
+        public bool avionDecorativo = true;
+        [Tooltip("Si asignas un prefab (por ejemplo un helicóptero), se usa en vez del avión de placeholder generado por código.")]
+        public GameObject prefabAvion;
+        [Tooltip("Escala del prefab de avión/helicóptero. Ignorado si no hay prefab asignado.")]
+        public float escalaPrefabAvion = 1f;
+        [Tooltip("Ajuste de rotación si el prefab no mira hacia +Z por defecto: gíralo hasta que el morro apunte en la dirección de vuelo.")]
+        public Vector3 rotacionExtraAvion = Vector3.zero;
+
+        [Header("Cámara (encuadre automático según el tamaño del tablero)")]
+        [Tooltip("Aleja o acerca la cámara según crece el tablero, conservando el mismo ángulo con el que la dejaste colocada en la escena. Se calibra sola la primera vez que se construye un tablero, tomando la posición y rotación que la cámara tenga en ese momento como referencia para 'Tablero Referencia Camara'.")]
+        public bool ajustarCamaraAutomaticamente = true;
+        [Tooltip("Tamaño de tablero para el que la cámara está colocada manualmente en la escena/prefab (el tamaño con el que se ve bien como en la referencia).")]
+        public Vector2Int tableroReferenciaCamara = new Vector2Int(10, 10);
+        [Tooltip("Multiplicador extra sobre el alejamiento calculado, por si quieres un poco más o menos margen alrededor del tablero.")]
+        [Range(0.5f, 2f)] public float margenExtraCamara = 1f;
+        [Tooltip("Opcional: si la cámara sigue a un objeto (por ejemplo un 'CameraTarget' del que cuelga un script de seguimiento) en vez de moverse directamente, asigna aquí ese objeto para que el ajuste se aplique a él en lugar de a la cámara.")]
+        public Transform objetivoCamaraAlternativo;
+        [Tooltip("Cámara real del juego. Solo hace falta si tu cámara NO tiene el tag 'MainCamera' (Camera.main no la encontraría) o si usas varias cámaras y quieres apuntar a una en concreto.")]
+        public Camera camaraJuego;
+        [Tooltip("Ajusta el campo de visión (zoom) además de la posición. Es el método más fiable: si algo más (un script de seguimiento) reescribe la posición de la cámara cada frame, el ajuste por posición se pierde, pero casi ningún script de seguimiento toca el FOV, así que esto sigue funcionando igual.")]
+        public bool ajustarCampoDeVisionTambien = true;
+        [Tooltip("Segundos aproximados entre cada pasada del avión por el cielo.")]
+        public float intervaloAvion = 22f;
+        [Tooltip("Segundos que tarda el avión en cruzar de un extremo al otro.")]
+        public float duracionVueloAvion = 13f;
+
+        // --- Biomas: cambia la paleta completa (celda, suelo, roca, cumbre, niebla).
         public enum Bioma { Pradera, Nieve, Arenoso, Selvatico }
         public Bioma biomaActual = Bioma.Pradera;
 
         private readonly Dictionary<int, Transform> tanquesVisuales = new Dictionary<int, Transform>();
         private readonly Dictionary<int, Coroutine> movimientosEnCurso = new Dictionary<int, Coroutine>();
+        private readonly List<Vector3> posicionesCampamentos = new List<Vector3>();
+        // Huella de cada formación montañosa: x, z = centro; w = radio ocupado.
+        private readonly List<Vector3> huellasMontanas = new List<Vector3>();
+
         private Transform contenedorCeldas;
         private Transform contenedorTanques;
         private Transform contenedorMontanas;
         private Transform contenedorCampamentos;
         private Transform contenedorTerreno;
+        private Transform contenedorAvion;
+        private Coroutine rutinaAvion;
+        private float _alturaMontanaAprox = 3f;
 
-        // Altura mundial (Y) de la superficie de arriba de la celda, calculada a partir
-        // de los bounds reales de la primera celda instanciada. Sirve de referencia para
-        // saber dónde "apoyar" cada tanque, sin importar el prefab que uses.
+        // Calibración de la cámara: se toma una sola vez (la primera vez que se
+        // construye un tablero) para no pelear con nada que la mueva o la
+        // rote manualmente después.
+        private bool _camaraCalibrada;
+        private Vector3 _offsetCamaraReferencia;
+        private Quaternion _rotacionCamaraReferencia;
+        private float _ladoReferenciaCamara = 10f;
+        private float _fovReferenciaCamara = 60f;
+
         private float superficieCeldaMundoY;
         private bool superficieCalculada;
 
-        // Llamalo ANTES de Construir() (por ejemplo, desde una pantalla de selección
-        // de paisaje) para que el tablero y las montañas salgan con esa paleta.
+        // Unidad de paisaje: crece con el tablero. TODO el decorado se mide con
+        // ella, por eso la composición se conserva sea cual sea el tamaño.
+        private float _u = 1f;
+        private float _escalaObjetos = 1f;
+        private Vector3 _centroTablero;
+        private float _mitadAncho, _mitadAlto;
+
         public void SetBioma(Bioma bioma)
         {
             biomaActual = bioma;
         }
 
-        private (Color celda, Color montanaBase, Color montanaPico, Color niebla) ObtenerPaletaBioma()
+        private (Color celda, Color suelo, Color roca, Color cumbre, Color niebla) ObtenerPaletaBioma()
         {
             switch (biomaActual)
             {
                 case Bioma.Nieve:
-                    return (new Color(0.85f, 0.88f, 0.92f), new Color(0.5f, 0.52f, 0.55f), new Color(0.95f, 0.96f, 0.98f), new Color(0.8f, 0.85f, 0.9f));
+                    return (new Color(0.85f, 0.88f, 0.92f), new Color(0.76f, 0.78f, 0.82f),
+                        new Color(0.5f, 0.52f, 0.55f), new Color(0.95f, 0.96f, 0.98f), new Color(0.8f, 0.85f, 0.9f));
                 case Bioma.Arenoso:
-                    return (new Color(0.82f, 0.68f, 0.42f), new Color(0.6f, 0.45f, 0.25f), new Color(0.75f, 0.6f, 0.35f), new Color(0.85f, 0.75f, 0.55f));
+                    return (new Color(0.82f, 0.68f, 0.42f), new Color(0.72f, 0.6f, 0.38f),
+                        new Color(0.6f, 0.45f, 0.25f), new Color(0.78f, 0.66f, 0.44f), new Color(0.85f, 0.75f, 0.55f));
                 case Bioma.Selvatico:
-                    return (new Color(0.25f, 0.45f, 0.2f), new Color(0.2f, 0.3f, 0.15f), new Color(0.35f, 0.4f, 0.2f), new Color(0.5f, 0.6f, 0.5f));
+                    return (new Color(0.25f, 0.45f, 0.2f), new Color(0.27f, 0.33f, 0.17f),
+                        new Color(0.2f, 0.3f, 0.15f), new Color(0.4f, 0.44f, 0.24f), new Color(0.5f, 0.6f, 0.5f));
                 default: // Pradera
-                    return (new Color(0.35f, 0.45f, 0.25f), new Color(0.4f, 0.38f, 0.32f), new Color(0.55f, 0.53f, 0.5f), new Color(0.6f, 0.65f, 0.7f));
+                    return (new Color(0.36f, 0.47f, 0.26f), new Color(0.47f, 0.43f, 0.29f),
+                        new Color(0.45f, 0.42f, 0.36f), new Color(0.72f, 0.7f, 0.68f), new Color(0.66f, 0.72f, 0.79f));
             }
         }
 
-        // Crea (o recrea) la grilla visual con el tamaño indicado.
+        // ---------------------------------------------------------------------
+        // CONSTRUCCIÓN
+        // ---------------------------------------------------------------------
         public void Construir(int ancho, int alto)
         {
             Limpiar();
 
             var paleta = ObtenerPaletaBioma();
+            CalcularEscala(ancho, alto);
 
-            ConstruirTerrenoExterior(ancho, alto, paleta.montanaBase);
+            // Orden importante: primero se fija el terreno (para poder consultar
+            // su altura), luego la sierra (que registra su huella) y al final el
+            // decorado, que esquiva montañas y campamentos.
+            CalcularPosicionesCampamentos(ancho, alto);
+            ConstruirSuelo(ancho, alto, paleta.suelo);
 
+            if (generarPaisaje)
+            {
+                ConstruirMontanas(paleta.roca, paleta.cumbre);
+                ConstruirDecorado(paleta.roca);
+            }
+
+            ConstruirCeldas(ancho, alto, paleta.celda);
+            ConstruirCampamentos();
+            AplicarAmbienteBioma(paleta.niebla);
+            AjustarCamaraAlTablero(ancho, alto);
+
+            if (avionDecorativo)
+            {
+                ConstruirAvion();
+                rutinaAvion = StartCoroutine(RutinaAvion());
+            }
+        }
+
+        private void CalcularEscala(int ancho, int alto)
+        {
+            _centroTablero = new Vector3((ancho - 1) * tamanoCelda * 0.5f, 0f, (alto - 1) * tamanoCelda * 0.5f);
+            _mitadAncho = ancho * tamanoCelda / 2f;
+            _mitadAlto = alto * tamanoCelda / 2f;
+
+            // Tablero de referencia: 10x10. Un 20x20 duplica la unidad, así que
+            // montañas, árboles y edificios crecen y se alejan en la misma
+            // proporción y la escena se ve idéntica en encuadre.
+            float lado = Mathf.Max(ancho, alto) * tamanoCelda;
+            float escalaTablero = Mathf.Clamp(lado / (10f * tamanoCelda), 0.65f, 2.6f);
+
+            _escalaObjetos = escalaTablero * escalaPaisaje;
+            _u = tamanoCelda * _escalaObjetos;
+        }
+
+        // Guarda la posición y rotación actuales de la cámara (o del objeto
+        // alternativo) la primera vez que se llama, usándolas como la
+        // referencia "correcta" para el tamaño de tablero indicado en
+        // 'tableroReferenciaCamara'. Todo ajuste posterior escala esa misma
+        // relación en vez de recalcular el encuadre desde cero.
+        private void CalibrarCamaraSiHaceFalta(Camera camara, Transform objetivo)
+        {
+            if (_camaraCalibrada) return;
+
+            var centroReferencia = new Vector3(
+                (tableroReferenciaCamara.x - 1) * tamanoCelda * 0.5f, 0f,
+                (tableroReferenciaCamara.y - 1) * tamanoCelda * 0.5f);
+
+            _offsetCamaraReferencia = objetivo.position - centroReferencia;
+            _rotacionCamaraReferencia = objetivo.rotation;
+            _ladoReferenciaCamara = Mathf.Max(
+                Mathf.Max(tableroReferenciaCamara.x, tableroReferenciaCamara.y) * tamanoCelda, 0.01f);
+            _fovReferenciaCamara = camara != null ? camara.fieldOfView : 60f;
+            _camaraCalibrada = true;
+        }
+
+        // Aleja o acerca la cámara para que un tablero grande se vea completo,
+        // en la misma proporción que el tablero de referencia.
+        //
+        // Se hace de DOS formas a la vez porque no sabemos qué controla
+        // realmente la cámara en esta escena:
+        //  1) Reposicionando el transform (funciona si la cámara es estática o
+        //     si 'objetivoCamaraAlternativo' es el objeto correcto a mover).
+        //  2) Ajustando el Field of View (funciona incluso si un script de
+        //     seguimiento reescribe la posición cada frame, porque ese tipo de
+        //     scripts casi nunca tocan el FOV). Este es el método robusto de
+        //     verdad: si el tablero no se veía completo pese al ajuste de
+        //     posición, es señal de que algo está sobrescribiendo la posición
+        //     de la cámara en cada frame -- el FOV no sufre ese problema.
+        private void AjustarCamaraAlTablero(int ancho, int alto)
+        {
+            if (!ajustarCamaraAutomaticamente) return;
+
+            var camara = camaraJuego != null ? camaraJuego : Camera.main;
+            var objetivo = objetivoCamaraAlternativo != null ? objetivoCamaraAlternativo
+                : (camara != null ? camara.transform : null);
+
+            if (camara == null || objetivo == null)
+            {
+                Debug.LogWarning("BoardView: no encontré ninguna cámara para ajustar el encuadre. " +
+                    "Si tu cámara real no tiene el tag 'MainCamera', asígnala en el campo 'Camara Juego' del Inspector.");
+                return;
+            }
+
+            CalibrarCamaraSiHaceFalta(camara, objetivo);
+
+            float ladoActual = Mathf.Max(ancho, alto) * tamanoCelda;
+            float factor = (ladoActual / _ladoReferenciaCamara) * margenExtraCamara;
+
+            objetivo.position = _centroTablero + _offsetCamaraReferencia * factor;
+            objetivo.rotation = _rotacionCamaraReferencia;
+
+            if (ajustarCampoDeVisionTambien && !camara.orthographic)
+            {
+                // Radio que hay que encuadrar: la diagonal del tablero más un
+                // colchón para que no quede pegado al borde de pantalla.
+                float radioTablero = Mathf.Sqrt(_mitadAncho * _mitadAncho + _mitadAlto * _mitadAlto)
+                                     + 2.5f * _u;
+                float distanciaCamara = Vector3.Distance(objetivo.position, _centroTablero);
+                float fovNecesario = 2f * Mathf.Atan(
+                    (radioTablero * margenExtraCamara) / Mathf.Max(distanciaCamara, 0.01f)) * Mathf.Rad2Deg;
+
+                // Nunca se cierra por debajo del FOV con el que quedó
+                // configurada la cámara para el tablero de referencia: solo
+                // abre más cuando el tablero real es más grande que esa
+                // referencia.
+                camara.fieldOfView = Mathf.Clamp(fovNecesario, _fovReferenciaCamara, 100f);
+            }
+        }
+
+        private void ConstruirCeldas(int ancho, int alto, Color colorCelda)
+        {
             contenedorCeldas = new GameObject("Celdas").transform;
             contenedorCeldas.SetParent(transform, false);
 
@@ -111,15 +308,15 @@ namespace TanksGame.Visual
 
                         var rendererCelda = celda.GetComponent<Renderer>();
                         if (rendererCelda != null)
-                            rendererCelda.material.color = paleta.celda;
+                        {
+                            rendererCelda.material.color = Color.white;
+                            rendererCelda.material.mainTexture = GenerarTexturaCelda(colorCelda);
+                        }
                     }
 
                     celda.name = $"Celda_{x}_{y}";
                     celda.transform.localPosition = CeldaAPosicionMundo(x, y);
 
-                    // Con la primera celda instanciada medimos su altura real (bounds),
-                    // en vez de asumir un valor fijo. Así sirve tanto para la primitiva
-                    // por defecto como para cualquier prefab de celda que asignes.
                     if (!superficieCalculada)
                     {
                         superficieCeldaMundoY = ObtenerAlturaSuperior(celda.transform, contenedorCeldas.position.y);
@@ -127,93 +324,25 @@ namespace TanksGame.Visual
                     }
                 }
             }
-
-            if (generarMontanas)
-                ConstruirMontanas(ancho, alto, paleta.montanaBase, paleta.montanaPico);
-
-            ConstruirCampamentos(ancho, alto);
-
-            AplicarAmbienteBioma(paleta.niebla);
         }
 
-        // Anillo de "montañas" (conos escalonados, placeholder) rodeando el tablero,
-        // como si el campo de batalla fuera un valle dentro de una sierra. Es
-        // deliberadamente procedural (primitivas + variación aleatoria de altura),
-        // pensado para reemplazarse por terreno esculpido / arte final más adelante.
-        private void ConstruirMontanas(int ancho, int alto, Color colorBase, Color colorPico)
+        // ---------------------------------------------------------------------
+        // COLOCACIÓN
+        // ---------------------------------------------------------------------
+        private float UmbralFrente => 1f - aperturaFrontal * 2f;
+
+        private Vector3 DireccionHaciaCamara()
         {
-            contenedorMontanas = new GameObject("Montañas").transform;
-            contenedorMontanas.SetParent(transform, false);
-
-            float mitadAncho = ancho * tamanoCelda / 2f;
-            float mitadAlto = alto * tamanoCelda / 2f;
-            float centroX = mitadAncho - tamanoCelda / 2f;
-            float centroZ = mitadAlto - tamanoCelda / 2f;
-            var centro = new Vector3(centroX, 0f, centroZ);
-
-            // Un poco de aleatoriedad fija (misma semilla) para que la silueta no
-            // sea perfectamente uniforme, pero sea igual cada vez que se reconstruye.
-            var rng = new System.Random(12345);
-
-            // Cuántas montañas caben "cómodamente" alrededor del perímetro real del
-            // tablero: escala con (ancho + alto) en vez de un número fijo, así un
-            // tablero grande no se queda con una sierra rala ni uno chico saturado.
-            int densidadBase = Mathf.Max(10, Mathf.RoundToInt((ancho + alto) * 0.9f));
-
-            for (int anillo = 0; anillo < anillosDeMontanas; anillo++)
-            {
-                // Separación fija respecto al borde real del tablero (no un círculo
-                // basado en el lado mayor), para que en tableros rectangulares la
-                // sierra abrace todo el contorno en vez de alejarse en el lado corto.
-                float margenAnillo = tamanoCelda * (2.2f + anillo * 2f);
-                int cantidadEnAnillo = densidadBase + anillo * 5;
-
-                for (int i = 0; i < cantidadEnAnillo; i++)
-                {
-                    float angulo = (float)i / cantidadEnAnillo * Mathf.PI * 2f;
-                    // Un poco de ruido en el ángulo para que no quede un anillo
-                    // perfectamente uniforme.
-                    angulo += (float)(rng.NextDouble() - 0.5) * 0.2f;
-                    var direccionMontana = new Vector3(Mathf.Cos(angulo), 0f, Mathf.Sin(angulo));
-
-                    // Deja libre el sector desde el que mira la cámara: las montañas
-                    // quedan a los lados y al fondo, nunca entre ella y el tablero.
-                    var camara = Camera.main;
-                    if (camara != null)
-                    {
-                        var haciaCamara = camara.transform.position - centro;
-                        haciaCamara.y = 0f;
-                        if (haciaCamara.sqrMagnitude > 0.001f &&
-                            Vector3.Dot(direccionMontana, haciaCamara.normalized) > 0.15f)
-                            continue;
-                    }
-
-                    float distanciaBorde = DistanciaCentroABorde(direccionMontana, mitadAncho, mitadAlto);
-                    float distanciaConRuido = distanciaBorde + margenAnillo + (float)(rng.NextDouble() - 0.5) * tamanoCelda * 1.5f;
-
-                    float x = centroX + direccionMontana.x * distanciaConRuido;
-                    float z = centroZ + direccionMontana.z * distanciaConRuido;
-
-                    float altura = Mathf.Lerp(alturaMontanaMinMax.x, alturaMontanaMinMax.y, (float)rng.NextDouble());
-                    altura = Mathf.Min(altura, 2.6f);
-                    // Las más lejanas (anillos de afuera) más altas, para dar sensación
-                    // de profundidad/sierra en vez de una pared pareja.
-                    altura *= 1f + anillo * 0.2f;
-
-                    float radioBase = altura * Mathf.Lerp(0.55f, 0.95f, (float)rng.NextDouble());
-
-                    var picoLocal = new Vector3(x, -0.25f, z);
-                    CrearFormacionMontanosa(picoLocal, radioBase, altura, colorBase, colorPico,
-                        $"Montana_{anillo}_{i}", i + anillo * 101, rng);
-                }
-            }
+            var camara = Camera.main;
+            var direccion = camara != null ? camara.transform.position - _centroTablero : new Vector3(-1f, 0f, -1f);
+            direccion.y = 0f;
+            if (direccion.sqrMagnitude < 0.0001f) direccion = new Vector3(-1f, 0f, -1f);
+            return direccion.normalized;
         }
 
-        // Distancia desde el centro del tablero hasta su borde rectangular real,
-        // siguiendo la dirección indicada (intersección rayo-caja en 2D). A
-        // diferencia de un radio fijo, esto hace que el anillo de montañas (y
-        // los campamentos) se ajusten al ancho y al alto del tablero por
-        // separado: en un tablero muy angosto no se alejan de más en ese eje.
+        // Distancia del centro al borde RECTANGULAR real del tablero en esa
+        // dirección. Todo el decorado se mide desde aquí y no desde el centro:
+        // en un tablero alargado, un radio fijo caería dentro del tablero.
         private static float DistanciaCentroABorde(Vector3 direccionNormalizada, float mitadAncho, float mitadAlto)
         {
             float porX = Mathf.Abs(direccionNormalizada.x) > 0.0001f ? mitadAncho / Mathf.Abs(direccionNormalizada.x) : float.MaxValue;
@@ -221,196 +350,484 @@ namespace TanksGame.Visual
             return Mathf.Min(porX, porZ);
         }
 
-        // Una "formación" es un pico principal más 1-2 picos satélite pequeños
-        // pegados a su base: rompe el patrón de conos idénticos y equiespaciados
-        // dando una silueta de sierra más orgánica, con cumbres nevadas/claras
-        // en los puntos más altos.
+        // Punto a una distancia del borde expresada en unidades de paisaje, con
+        // el ángulo restringido por su orientación respecto a la cámara.
+        private bool PuntoAlrededorDelTablero(Vector3 haciaCamara, float dotMinimo, float dotMaximo,
+            float offsetMin, float offsetMax, System.Random rng, out float px, out float pz)
+        {
+            for (int intento = 0; intento < 40; intento++)
+            {
+                float angulo = (float)rng.NextDouble() * Mathf.PI * 2f;
+                var direccion = new Vector3(Mathf.Cos(angulo), 0f, Mathf.Sin(angulo));
+
+                float dot = Vector3.Dot(direccion, haciaCamara);
+                if (dot < dotMinimo || dot > dotMaximo) continue;
+
+                float distancia = DistanciaCentroABorde(direccion, _mitadAncho, _mitadAlto)
+                                  + _u * Mathf.Lerp(offsetMin, offsetMax, (float)rng.NextDouble());
+
+                px = _centroTablero.x + direccion.x * distancia;
+                pz = _centroTablero.z + direccion.z * distancia;
+                return true;
+            }
+
+            px = 0f;
+            pz = 0f;
+            return false;
+        }
+
+        private bool EstaCercaDeCampamento(float x, float z, float distanciaMinima)
+        {
+            float minimoCuadrado = distanciaMinima * distanciaMinima;
+            foreach (var campamento in posicionesCampamentos)
+            {
+                float dx = x - campamento.x;
+                float dz = z - campamento.z;
+                if (dx * dx + dz * dz < minimoCuadrado) return true;
+            }
+            return false;
+        }
+
+        // Permite plantar árboles y rocas hasta el pie mismo de la sierra sin
+        // que se metan dentro de una montaña.
+        private bool EstaDentroDeMontana(float x, float z, float margenExtra)
+        {
+            foreach (var huella in huellasMontanas)
+            {
+                float dx = x - huella.x;
+                float dz = z - huella.z;
+                float radio = huella.y + margenExtra;
+                if (dx * dx + dz * dz < radio * radio) return true;
+            }
+            return false;
+        }
+
+        // ---------------------------------------------------------------------
+        // SIERRA
+        // ---------------------------------------------------------------------
+        private void ConstruirMontanas(Color colorRoca, Color colorCumbre)
+        {
+            contenedorMontanas = new GameObject("Montañas").transform;
+            contenedorMontanas.SetParent(transform, false);
+
+            var haciaCamara = DireccionHaciaCamara();
+            var rng = new System.Random(12345);
+
+            var texturaMontana = GenerarTexturaMontana(colorRoca, colorCumbre);
+            var normalMontana = GenerarNormalMontana();
+            var materialMontana = new Material(ObtenerShaderEstandar()) { mainTexture = texturaMontana };
+            AsignarNormal(materialMontana, normalMontana, 1.1f);
+            AjustarBrillo(materialMontana, 0.08f);
+
+            Color colorDerrubio = Color.Lerp(colorRoca, new Color(0.82f, 0.79f, 0.72f), 0.7f);
+
+            const int anillos = 3;
+            for (int anillo = 0; anillo < anillos; anillo++)
+            {
+                float progreso = (float)anillo / (anillos - 1);
+                float margenAnillo = _u * (sierraPegadaAlTablero + anillo * 1.9f);
+
+                // Altura y radio típicos del anillo: con ellos se calcula cuántas
+                // formaciones caben pegadas unas a otras. Así la sierra siempre
+                // forma un muro continuo, sea el tablero cuadrado o alargado, y
+                // no un collar de conos sueltos con huecos.
+                float alturaTipica = _u * 2.5f * alturaSierra * (1f + anillo * 0.38f);
+                float radioTipico = alturaTipica * 0.58f;
+                if (anillo == anillos - 1) _alturaMontanaAprox = alturaTipica * 1.3f;
+                float perimetroAnillo = 4f * (_mitadAncho + _mitadAlto)
+                                        + 2f * Mathf.PI * (margenAnillo + radioTipico);
+                int cantidad = Mathf.Clamp(Mathf.RoundToInt(perimetroAnillo / (radioTipico * 1.05f)), 12, 46);
+
+                for (int i = 0; i < cantidad; i++)
+                {
+                    float angulo = (float)i / cantidad * Mathf.PI * 2f;
+                    angulo += (float)(rng.NextDouble() - 0.5) * 0.18f;
+                    var direccion = new Vector3(Mathf.Cos(angulo), 0f, Mathf.Sin(angulo));
+
+                    float dotCamara = Vector3.Dot(direccion, haciaCamara);
+                    if (dotCamara > UmbralFrente) continue; // sector del bosque
+
+                    float altura = alturaTipica * Mathf.Lerp(0.78f, 1.3f, (float)rng.NextDouble());
+                    float radioBase = altura * Mathf.Lerp(0.45f, 0.7f, (float)rng.NextDouble());
+
+                    // La distancia incluye la huella real de la formación (pico +
+                    // agujas + derrubios), por eso ninguna puede pisar el tablero
+                    // por grande que sea.
+                    float huella = radioBase * 1.6f;
+                    float extraFondo = _u * 0.7f * Mathf.Clamp01(-dotCamara);
+                    float distancia = DistanciaCentroABorde(direccion, _mitadAncho, _mitadAlto)
+                                      + margenAnillo + huella + extraFondo
+                                      + (float)rng.NextDouble() * _u * 1.1f;
+
+                    float x = _centroTablero.x + direccion.x * distancia;
+                    float z = _centroTablero.z + direccion.z * distancia;
+
+                    float tinte = 0.88f + (float)rng.NextDouble() * 0.22f;
+                    var color = Color.Lerp(new Color(tinte, tinte, tinte),
+                        new Color(0.8f, 0.85f, 0.95f), progreso * 0.4f);
+
+                    var posicion = new Vector3(x, AlturaSueloMundo(x, z) - 0.3f * _escalaObjetos, z);
+                    CrearFormacionMontanosa(posicion, radioBase, altura, materialMontana, color,
+                        colorDerrubio, $"Montana_{anillo}_{i}", i + anillo * 101, rng);
+
+                    huellasMontanas.Add(new Vector3(x, radioBase * 1.35f, z));
+                }
+            }
+        }
+
         private void CrearFormacionMontanosa(Vector3 posicionBase, float radioBase, float altura,
-            Color colorBase, Color colorPico, string nombre, int semilla, System.Random rng)
+            Material materialCompartido, Color tinte, Color colorDerrubio,
+            string nombre, int semilla, System.Random rng)
         {
             var grupo = new GameObject(nombre).transform;
             grupo.SetParent(contenedorMontanas, false);
             grupo.localPosition = posicionBase;
-            grupo.localRotation = Quaternion.Euler((float)(rng.NextDouble() - 0.5) * 6f, (float)(rng.NextDouble() * 360.0), (float)(rng.NextDouble() - 0.5) * 6f);
+            grupo.localRotation = Quaternion.Euler((float)(rng.NextDouble() - 0.5) * 5f,
+                (float)(rng.NextDouble() * 360.0), (float)(rng.NextDouble() - 0.5) * 5f);
 
-            PintarMontana(CrearPicoMontana(radioBase, altura, semilla, Vector3.zero, grupo),
-                colorBase, colorPico, altura, alturaMontanaMinMax.y);
+            // Falda de derrubios: la pedrera clara que se acumula al pie de las
+            // paredes de roca. Es la transición que evita que la montaña parezca
+            // clavada en el suelo como un cono suelto.
+            var derrubio = CrearMontanaIrregular(radioBase * 1.4f, altura * 0.17f, semilla + 4321,
+                altura * 0.17f, 18, false);
+            derrubio.name = "Derrubios";
+            derrubio.transform.SetParent(grupo, false);
+            derrubio.transform.localPosition = new Vector3(0f, 0.02f, 0f);
+            PintarYLimpiar(derrubio, colorDerrubio * tinte);
 
-            // ~55% de las formaciones ganan un pico satélite más bajo, para que la
-            // sierra se vea como un conjunto de cumbres y no una fila de conos.
-            if (rng.NextDouble() < 0.55)
+            CrearPicoMontana(radioBase, altura, semilla, Vector3.zero, grupo, materialCompartido, tinte, rng);
+
+            int satelites = rng.NextDouble() < 0.85 ? (rng.NextDouble() < 0.5 ? 2 : 1) : 0;
+            for (int s = 0; s < satelites; s++)
             {
-                float alturaSat = altura * Mathf.Lerp(0.35f, 0.6f, (float)rng.NextDouble());
-                float radioSat = radioBase * Mathf.Lerp(0.45f, 0.7f, (float)rng.NextDouble());
+                float alturaSat = altura * Mathf.Lerp(0.45f, 0.85f, (float)rng.NextDouble());
+                float radioSat = radioBase * Mathf.Lerp(0.32f, 0.58f, (float)rng.NextDouble());
                 float anguloSat = (float)rng.NextDouble() * Mathf.PI * 2f;
-                float distSat = radioBase * Mathf.Lerp(0.5f, 0.8f, (float)rng.NextDouble());
-                var offsetSat = new Vector3(Mathf.Cos(anguloSat) * distSat, 0f, Mathf.Sin(anguloSat) * distSat);
+                float distSat = radioBase * Mathf.Lerp(0.45f, 0.8f, (float)rng.NextDouble());
+                var offset = new Vector3(Mathf.Cos(anguloSat) * distSat, 0f, Mathf.Sin(anguloSat) * distSat);
 
-                PintarMontana(CrearPicoMontana(radioSat, alturaSat, semilla + 777, offsetSat, grupo),
-                    colorBase, colorPico, alturaSat, alturaMontanaMinMax.y);
+                CrearPicoMontana(radioSat, alturaSat, semilla + 777 + s * 131, offset, grupo,
+                    materialCompartido, tinte, rng);
             }
         }
 
-        private GameObject CrearPicoMontana(float radio, float altura, int semilla, Vector3 offsetLocal, Transform padre)
+        private void CrearPicoMontana(float radio, float altura, int semilla, Vector3 offsetLocal,
+            Transform padre, Material materialCompartido, Color tinte, System.Random rng)
         {
-            var montana = CrearMontanaIrregular(radio, altura, semilla);
+            // El rango se calcula con la altura máxima posible de la sierra para
+            // que las bandas de la textura (pasto / pedrera / roca / nieve) caigan
+            // siempre a la misma cota real: solo los picos altos salen nevados.
+            float rangoMaximo = _u * 2.5f * alturaSierra * 1.76f * 1.3f;
+            var montana = CrearMontanaIrregular(radio, altura, semilla, rangoMaximo, 28);
             montana.transform.SetParent(padre, false);
             montana.transform.localPosition = offsetLocal;
 
-            // Sin collider: son solo decorado de fondo, no deberían bloquear nada del juego.
+            var renderer = montana.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                renderer.material = materialCompartido;
+                renderer.material.color = tinte;
+            }
+
             var collider = montana.GetComponent<Collider>();
             if (collider != null) Destroy(collider);
-
-            return montana;
         }
 
-        // Colorea con degradado base->pico y, para las cumbres más altas del
-        // rango configurado, agrega un remate claro tipo nieve/roca expuesta
-        // (mezclando hacia blanco) para dar sensación de profundidad e hitos
-        // visuales distintos en vez de un mismo tono plano en toda la sierra.
-        private static void PintarMontana(GameObject montana, Color colorBase, Color colorPico, float altura, float alturaMaxRango)
-        {
-            var renderer = montana.GetComponent<Renderer>();
-            if (renderer == null) return;
-
-            float proporcionAltura = alturaMaxRango > 0f ? Mathf.Clamp01(altura / alturaMaxRango) : 0f;
-            Color color = Color.Lerp(colorBase, colorPico, Mathf.Clamp01(proporcionAltura * 0.7f + 0.1f));
-
-            // Solo las cumbres realmente más altas del rango se aclaran, y menos
-            // intensamente que antes -- si no, toda la sierra se ve pálida y plana.
-            if (proporcionAltura > 0.92f)
-                color = Color.Lerp(color, Color.white, (proporcionAltura - 0.92f) / 0.08f * 0.3f);
-
-            renderer.material.color = color;
-        }
-
-        // Suelo continuo fuera del tablero: elimina el vacÃ­o gris y crea un valle
-        // de tierra donde se apoyan los campamentos y las formaciones rocosas.
-        // Suelo con relieve real (ruido) en vez de un cubo plano: queda
-        // perfectamente llano justo debajo y alrededor del tablero (para no
-        // interferir con las celdas) y se vuelve accidentado -- lomas, hondonadas
-        // -- a partir de ahí, como el terreno irregular de una zona de guerra.
-        private void ConstruirTerrenoExterior(int ancho, int alto, Color colorRoca)
+        // ---------------------------------------------------------------------
+        // SUELO
+        // ---------------------------------------------------------------------
+        private void ConstruirSuelo(int ancho, int alto, Color colorSuelo)
         {
             contenedorTerreno = new GameObject("TerrenoExterior").transform;
             contenedorTerreno.SetParent(transform, false);
 
-            float mitadAncho = ancho * tamanoCelda / 2f;
-            float mitadAlto = alto * tamanoCelda / 2f;
-            var centro = new Vector3((ancho - 1) * tamanoCelda * 0.5f, -0.16f,
-                (alto - 1) * tamanoCelda * 0.5f);
-
+            var centro = new Vector3(_centroTablero.x, -0.16f, _centroTablero.z);
             float lado = Mathf.Max(ancho, alto) * tamanoCelda;
-            float extensionTotal = lado + 34f;
+            float extensionTotal = lado + 52f * _escalaObjetos;
+
+            _terrenoCentro = centro;
+            _terrenoMitadAncho = _mitadAncho;
+            _terrenoMitadAlto = _mitadAlto;
+            _terrenoMargenPlano = tamanoCelda * 1.4f;
+            _terrenoEscala = _escalaObjetos;
+            _terrenoRadioCuenco = (_mitadAncho + _mitadAlto) * 0.5f + 12f * _escalaObjetos;
+            _terrenoAlturaCuenco = 2.4f * _escalaObjetos;
 
             var sueloGo = new GameObject("SueloAccidentado");
             sueloGo.transform.SetParent(contenedorTerreno, false);
             sueloGo.transform.localPosition = centro;
 
-            // Más subdivisiones en tableros grandes (hasta un tope) para que el
-            // relieve no se vea "en bloques" incluso cuando la extensión total
-            // del suelo crece mucho.
-            int resolucion = Mathf.Clamp(Mathf.RoundToInt(extensionTotal / 1.4f), 26, 70);
-            var mesh = CrearMallaTerrenoAccidentado(extensionTotal, resolucion, mitadAncho, mitadAlto, tamanoCelda * 1.4f);
+            // Más subdivisión que antes: el relieve fino se pierde si la malla no
+            // tiene vértices suficientes, por muy buena que sea la textura.
+            int resolucion = Mathf.Clamp(Mathf.RoundToInt(extensionTotal / 0.9f), 48, 150);
+            var mesh = CrearMallaTerrenoAccidentado(extensionTotal, resolucion,
+                _mitadAncho, _mitadAlto, _terrenoMargenPlano, _terrenoEscala,
+                _terrenoRadioCuenco, _terrenoAlturaCuenco);
             sueloGo.AddComponent<MeshFilter>().sharedMesh = mesh;
+
             var rendererTerreno = sueloGo.AddComponent<MeshRenderer>();
-            rendererTerreno.material = new Material(ObtenerShaderEstandar());
-            rendererTerreno.material.color = new Color(0.31f, 0.27f, 0.20f);
+            var material = new Material(ObtenerShaderEstandar()) { color = Color.white };
+            material.mainTexture = GenerarTexturaTerreno(colorSuelo);
+            float repeticiones = Mathf.Max(3f, extensionTotal / (12f * _escalaObjetos));
+            material.mainTextureScale = new Vector2(repeticiones, repeticiones);
 
-            var rng = new System.Random(778);
-
-            // Cantidad de rocas, cráteres y trincheras escalada con el perímetro
-            // del tablero: en un tablero de 20x20 hay mucho más terreno alrededor
-            // que llenar que en uno de 8x8, así que la densidad de decorado
-            // acompaña ese crecimiento en vez de quedarse en un número fijo.
-            int cantidadRocas = Mathf.Clamp(Mathf.RoundToInt((ancho + alto) * 1.7f), 26, 110);
-            for (int i = 0; i < cantidadRocas; i++)
-            {
-                float angulo = (float)rng.NextDouble() * Mathf.PI * 2f;
-                float distancia = lado * Mathf.Lerp(0.62f, 1.15f, (float)rng.NextDouble());
-                var posicion = centro + new Vector3(Mathf.Cos(angulo), 0.02f, Mathf.Sin(angulo)) * distancia;
-                var roca = CrearMontanaIrregular(Mathf.Lerp(0.12f, 0.38f, (float)rng.NextDouble()),
-                    Mathf.Lerp(0.12f, 0.5f, (float)rng.NextDouble()), i + 500);
-                roca.name = "RocaDecorativa";
-                roca.transform.SetParent(contenedorTerreno, false);
-                roca.transform.localPosition = posicion;
-                var renderer = roca.GetComponent<Renderer>();
-                if (renderer != null)
-                    renderer.material.color = Color.Lerp(colorRoca, new Color(0.16f, 0.13f, 0.1f), (float)rng.NextDouble() * 0.5f);
-            }
-
-            ConstruirDecoradoBelico(centro, lado, ancho, alto, rng);
+            // Mapa de normales derivado del mismo ruido que pinta la textura: es
+            // lo que da relieve de grava y hierba a distancia corta, algo que una
+            // textura plana no puede conseguir por muchos colores que tenga.
+            AsignarNormal(material, GenerarNormalTerreno(), 0.9f);
+            AjustarBrillo(material, 0.04f);
+            rendererTerreno.material = material;
         }
 
-        // Cráteres, trincheras y estacas con alambre de espino esparcidos entre el
-        // tablero y las montañas -- rellenan el vacío en tableros grandes y
-        // refuerzan la sensación de campo de batalla, no solo de valle vacío.
-        private void ConstruirDecoradoBelico(Vector3 centro, float lado, int ancho, int alto, System.Random rng)
+        private void ConstruirDecorado(Color colorRoca)
+        {
+            var rng = new System.Random(778);
+            var haciaCamara = DireccionHaciaCamara();
+
+            ConstruirRocas(haciaCamara, colorRoca, rng);
+            ConstruirBosque(haciaCamara, rng);
+            ConstruirPasto(haciaCamara, rng);
+            ConstruirDecoradoBelico(haciaCamara, rng);
+        }
+
+        private void ConstruirRocas(Vector3 haciaCamara, Color colorRoca, System.Random rng)
+        {
+            var contenedor = new GameObject("Rocas").transform;
+            contenedor.SetParent(contenedorTerreno, false);
+
+            int cantidad = Mathf.RoundToInt(70f * Mathf.Clamp(_escalaObjetos, 0.8f, 1.8f));
+            for (int i = 0; i < cantidad; i++)
+            {
+                if (!PuntoAlrededorDelTablero(haciaCamara, -1f, 1f, 1.2f, 11f, rng, out float px, out float pz))
+                    continue;
+                if (EstaDentroDeMontana(px, pz, 0.1f)) continue;
+                if (EstaCercaDeCampamento(px, pz, 1.6f * _escalaObjetos)) continue;
+
+                float radio = Mathf.Lerp(0.14f, 0.45f, (float)rng.NextDouble()) * _escalaObjetos;
+                float altura = Mathf.Lerp(0.12f, 0.55f, (float)rng.NextDouble()) * _escalaObjetos;
+                var roca = CrearMontanaIrregular(radio, altura, i + 500, altura, 12);
+                roca.name = "Roca";
+                roca.transform.SetParent(contenedor, false);
+                roca.transform.localPosition = new Vector3(px, AlturaSueloMundo(px, pz), pz);
+                roca.transform.localRotation = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+                PintarYLimpiar(roca, Color.Lerp(colorRoca, new Color(0.3f, 0.27f, 0.22f), (float)rng.NextDouble() * 0.65f));
+            }
+        }
+
+        // Bosque denso: empieza justo por detrás de la línea de campamentos y se
+        // extiende hasta el pie de la sierra, rellenando el frente y los flancos.
+        private void ConstruirBosque(Vector3 haciaCamara, System.Random rng)
+        {
+            var contenedor = new GameObject("Bosque").transform;
+            contenedor.SetParent(contenedorTerreno, false);
+
+            Color tronco = new Color(0.21f, 0.14f, 0.08f);
+            Color follajeOscuro = new Color(0.07f, 0.16f, 0.08f);
+            Color follajeClaro = new Color(0.22f, 0.34f, 0.14f);
+            Color follajeOtono = new Color(0.45f, 0.36f, 0.13f);
+
+            // Densidad más alta y sector un poco más ancho que antes: quedaban
+            // huecos vacíos y visibles cerca del pie de la sierra en los
+            // costados y en la esquina más alejada de los campamentos, porque el
+            // sector frontal era muy estrecho y las distancias de exclusión
+            // (montaña/campamento) dejaban demasiado colchón sin árboles.
+            int manchones = Mathf.RoundToInt(100f * densidadBosque);
+            const int maximoArboles = 700;
+            int indice = 0;
+
+            float dotMinimo = UmbralFrente - 0.18f;
+            float inicioBosque = distanciaEdificios + 0.3f;
+
+            for (int m = 0; m < manchones && indice < maximoArboles; m++)
+            {
+                if (!PuntoAlrededorDelTablero(haciaCamara, dotMinimo, 1f, inicioBosque, inicioBosque + 11f,
+                        rng, out float cx, out float cz))
+                    continue;
+                if (EstaDentroDeMontana(cx, cz, 0.35f * _escalaObjetos)) continue;
+                if (EstaCercaDeCampamento(cx, cz, 1.5f * _escalaObjetos)) continue;
+
+                // Manchones más grandes y más poblados, y con menos separación
+                // entre sí (el rango de offset de arriba es más corto): así las
+                // copas se solapan entre manchones vecinos y se lee como un
+                // bosque compacto en vez de islas de árboles.
+                int arbolesEnManchon = 9 + rng.Next(8);
+                float radioManchon = Mathf.Lerp(2f, 3.8f, (float)rng.NextDouble()) * _escalaObjetos;
+                float tonoManchon = (float)rng.NextDouble();
+
+                for (int a = 0; a < arbolesEnManchon && indice < maximoArboles; a++)
+                {
+                    float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
+                    float dist = radioManchon * Mathf.Sqrt((float)rng.NextDouble());
+                    float px = cx + Mathf.Cos(ang) * dist;
+                    float pz = cz + Mathf.Sin(ang) * dist;
+
+                    if (EstaDentroDeMontana(px, pz, 0.15f * _escalaObjetos)) continue;
+                    if (EstaCercaDeCampamento(px, pz, 1.5f * _escalaObjetos)) continue;
+
+                    var follaje = Color.Lerp(follajeOscuro, follajeClaro, (float)rng.NextDouble());
+                    if (tonoManchon > 0.8f) follaje = Color.Lerp(follaje, follajeOtono, 0.5f);
+
+                    CrearArbol(contenedor, px, pz, indice++, tronco, follaje, rng);
+                }
+            }
+        }
+
+        private void CrearArbol(Transform contenedor, float px, float pz, int indice,
+            Color tronco, Color follaje, System.Random rng)
+        {
+            var arbol = new GameObject("Arbol").transform;
+            arbol.SetParent(contenedor, false);
+            arbol.localPosition = new Vector3(px, AlturaSueloMundo(px, pz), pz);
+            arbol.localScale = Vector3.one * Mathf.Lerp(0.85f, 1.75f, (float)rng.NextDouble()) * _escalaObjetos;
+            arbol.localRotation = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+
+            float alturaTronco = Mathf.Lerp(0.35f, 0.6f, (float)rng.NextDouble());
+            CrearPieza(arbol, PrimitiveType.Cylinder, new Vector3(0f, alturaTronco * 0.5f, 0f),
+                new Vector3(0.05f, alturaTronco * 0.5f, 0.05f), tronco);
+
+            float radioCopa = Mathf.Lerp(0.3f, 0.46f, (float)rng.NextDouble());
+            float alturaCapa = Mathf.Lerp(0.48f, 0.7f, (float)rng.NextDouble());
+
+            for (int capa = 0; capa < 3; capa++)
+            {
+                float factor = 1f - capa * 0.27f;
+                var copa = CrearMontanaIrregular(radioCopa * factor, alturaCapa * (1f - capa * 0.18f),
+                    indice * 11 + 1000 + capa, alturaCapa, 8, false);
+                copa.transform.SetParent(arbol, false);
+                copa.transform.localPosition = new Vector3(0f, alturaTronco * 0.6f + alturaCapa * 0.42f * capa, 0f);
+                PintarYLimpiar(copa, follaje * (1f - capa * 0.07f));
+            }
+        }
+
+        private void ConstruirPasto(Vector3 haciaCamara, System.Random rng)
+        {
+            var contenedor = new GameObject("Pasto").transform;
+            contenedor.SetParent(contenedorTerreno, false);
+
+            Color verdeOscuro = new Color(0.2f, 0.3f, 0.12f);
+            Color verdeClaro = new Color(0.38f, 0.44f, 0.19f);
+
+            int manojos = Mathf.RoundToInt(80f * Mathf.Clamp(_escalaObjetos, 0.8f, 1.8f));
+            for (int i = 0; i < manojos; i++)
+            {
+                if (!PuntoAlrededorDelTablero(haciaCamara, -1f, 1f, 1f, 12f, rng, out float px, out float pz))
+                    continue;
+                if (EstaDentroDeMontana(px, pz, 0f)) continue;
+
+                var baseManojo = new Vector3(px, AlturaSueloMundo(px, pz) + 0.02f, pz);
+                int hojas = 3 + rng.Next(4);
+                for (int h = 0; h < hojas; h++)
+                {
+                    float ex = (float)(rng.NextDouble() - 0.5) * 0.45f * _escalaObjetos;
+                    float ez = (float)(rng.NextDouble() - 0.5) * 0.45f * _escalaObjetos;
+                    float alturaHoja = Mathf.Lerp(0.15f, 0.32f, (float)rng.NextDouble()) * _escalaObjetos;
+                    var color = Color.Lerp(verdeOscuro, verdeClaro, (float)rng.NextDouble());
+
+                    CrearPieza(contenedor, PrimitiveType.Cube,
+                        baseManojo + new Vector3(ex, alturaHoja * 0.5f, ez),
+                        new Vector3(0.035f * _escalaObjetos, alturaHoja, 0.035f * _escalaObjetos), color,
+                        Quaternion.Euler((float)(rng.NextDouble() - 0.5) * 20f, (float)rng.NextDouble() * 360f,
+                            (float)(rng.NextDouble() - 0.5) * 20f));
+                }
+            }
+        }
+
+        private void ConstruirDecoradoBelico(Vector3 haciaCamara, System.Random rng)
         {
             var contenedor = new GameObject("DecoradoBelico").transform;
             contenedor.SetParent(contenedorTerreno, false);
 
             Color tierraQuemada = new Color(0.14f, 0.11f, 0.08f);
-            Color maderaVieja = new Color(0.2f, 0.14f, 0.08f);
+            float dotMinimo = UmbralFrente - 0.3f;
 
-            int cantidadCrateres = Mathf.Clamp(Mathf.RoundToInt((ancho + alto) * 0.45f), 6, 26);
-            for (int i = 0; i < cantidadCrateres; i++)
+            int crateres = Mathf.RoundToInt(14f * Mathf.Clamp(_escalaObjetos, 0.8f, 1.8f));
+            for (int i = 0; i < crateres; i++)
             {
-                float angulo = (float)rng.NextDouble() * Mathf.PI * 2f;
-                float distancia = lado * Mathf.Lerp(0.55f, 1.1f, (float)rng.NextDouble());
-                var posicion = centro + new Vector3(Mathf.Cos(angulo), 0.015f, Mathf.Sin(angulo)) * distancia;
-                float radioCrater = Mathf.Lerp(0.5f, 1.3f, (float)rng.NextDouble());
+                if (!PuntoAlrededorDelTablero(haciaCamara, dotMinimo, 1f, 1.4f, 9f, rng, out float px, out float pz))
+                    continue;
+                if (EstaDentroDeMontana(px, pz, 0f)) continue;
+                if (EstaCercaDeCampamento(px, pz, 2.4f * _escalaObjetos)) continue;
 
-                // Anillo oscuro (tierra removida) + fondo hundido: un cráter de
-                // impacto simple pero reconocible desde arriba.
+                var posicion = new Vector3(px, AlturaSueloMundo(px, pz) + 0.015f, pz);
+                float radio = Mathf.Lerp(0.5f, 1.3f, (float)rng.NextDouble()) * _escalaObjetos;
+
                 CrearPieza(contenedor, PrimitiveType.Cylinder, posicion,
-                    new Vector3(radioCrater, 0.02f, radioCrater), tierraQuemada);
-                CrearPieza(contenedor, PrimitiveType.Sphere, posicion + Vector3.down * radioCrater * 0.35f,
-                    new Vector3(radioCrater * 0.85f, radioCrater * 0.5f, radioCrater * 0.85f), Color.Lerp(tierraQuemada, Color.black, 0.3f));
+                    new Vector3(radio, 0.02f, radio), tierraQuemada);
+                CrearPieza(contenedor, PrimitiveType.Sphere, posicion + Vector3.down * radio * 0.35f,
+                    new Vector3(radio * 0.85f, radio * 0.5f, radio * 0.85f),
+                    Color.Lerp(tierraQuemada, Color.black, 0.3f));
             }
 
-            int cantidadTrincheras = Mathf.Clamp(Mathf.RoundToInt((ancho + alto) * 0.25f), 3, 12);
-            for (int i = 0; i < cantidadTrincheras; i++)
+            int trincheras = Mathf.RoundToInt(5f * Mathf.Clamp(_escalaObjetos, 0.8f, 1.6f));
+            for (int i = 0; i < trincheras; i++)
             {
-                float angulo = (float)rng.NextDouble() * Mathf.PI * 2f;
-                float distancia = lado * Mathf.Lerp(0.6f, 1.0f, (float)rng.NextDouble());
-                var posicion = centro + new Vector3(Mathf.Cos(angulo), 0.05f, Mathf.Sin(angulo)) * distancia;
+                if (!PuntoAlrededorDelTablero(haciaCamara, dotMinimo, 1f, 2f, 7f, rng, out float px, out float pz))
+                    continue;
+                if (EstaDentroDeMontana(px, pz, 0f)) continue;
+                if (EstaCercaDeCampamento(px, pz, 3.2f * _escalaObjetos)) continue;
+
                 var trinchera = new GameObject("Trinchera").transform;
                 trinchera.SetParent(contenedor, false);
-                trinchera.localPosition = posicion;
+                trinchera.localPosition = new Vector3(px, AlturaSueloMundo(px, pz) + 0.05f, pz);
                 trinchera.localRotation = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+                trinchera.localScale = Vector3.one * _escalaObjetos;
 
-                CrearPieza(trinchera, PrimitiveType.Cube, Vector3.zero,
-                    new Vector3(2.4f, 0.05f, 0.7f), tierraQuemada);
-                // Bordes de sacos de tierra a ambos lados de la zanja.
-                for (int lado2 = -1; lado2 <= 1; lado2 += 2)
-                {
+                CrearPieza(trinchera, PrimitiveType.Cube, Vector3.zero, new Vector3(2.4f, 0.05f, 0.7f), tierraQuemada);
+                for (int lado = -1; lado <= 1; lado += 2)
                     for (int s = 0; s < 4; s++)
                         CrearPieza(trinchera, PrimitiveType.Capsule,
-                            new Vector3(-1.0f + s * 0.65f, 0.1f, lado2 * 0.42f),
+                            new Vector3(-1.0f + s * 0.65f, 0.1f, lado * 0.42f),
                             new Vector3(0.28f, 0.14f, 0.28f), new Color(0.4f, 0.34f, 0.24f));
-                }
-            }
-
-            // Filas de estacas con "alambre" (cilindros finos) marcando el límite
-            // del terreno defendido, cerca del borde del tablero.
-            int cantidadAlambradas = Mathf.Clamp(Mathf.RoundToInt((ancho + alto) * 0.3f), 4, 16);
-            float radioAlambrada = lado * 0.56f;
-            for (int i = 0; i < cantidadAlambradas; i++)
-            {
-                float angulo = (float)i / cantidadAlambradas * Mathf.PI * 2f + (float)(rng.NextDouble() - 0.5) * 0.1f;
-                var posicion = centro + new Vector3(Mathf.Cos(angulo), 0.15f, Mathf.Sin(angulo)) * radioAlambrada;
-                CrearPieza(contenedor, PrimitiveType.Cylinder, posicion,
-                    new Vector3(0.035f, 0.18f, 0.035f), maderaVieja, Quaternion.Euler(0f, 0f, (float)(rng.NextDouble() - 0.5) * 25f));
             }
         }
 
-        // Genera una grilla subdividida y le aplica ruido Perlin como altura,
-        // pero con una "rampa" que la mantiene perfectamente plana (altura 0)
-        // dentro del rectángulo del tablero + margen, para no dejar huecos ni
-        // protuberancias debajo de las celdas jugables.
+        // ---------------------------------------------------------------------
+        // TERRENO (malla + consulta de altura)
+        // ---------------------------------------------------------------------
+        private const float OffsetRuidoTerrenoX = 137.2f;
+        private const float OffsetRuidoTerrenoZ = 84.9f;
+
+        private Vector3 _terrenoCentro;
+        private float _terrenoMitadAncho, _terrenoMitadAlto, _terrenoMargenPlano;
+        private float _terrenoEscala = 1f, _terrenoRadioCuenco = 20f, _terrenoAlturaCuenco = 2.4f;
+
+        // Relieve del valle. Además del ruido (ahora escalado con el tablero para
+        // que las lomas crezcan con él), el terreno sube suavemente al alejarse:
+        // el campo de batalla queda en el fondo de un cuenco y la sierra apoyada
+        // sobre las laderas, en vez de todo sobre una mesa plana.
+        private static float AlturaTerrenoLocalEn(float px, float pz, float mitadAncho, float mitadAlto,
+            float margenPlano, float escala, float radioCuenco, float alturaCuenco)
+        {
+            float fueraX = Mathf.Max(0f, Mathf.Abs(px) - (mitadAncho + margenPlano));
+            float fueraZ = Mathf.Max(0f, Mathf.Abs(pz) - (mitadAlto + margenPlano));
+            float fuera = Mathf.Sqrt(fueraX * fueraX + fueraZ * fueraZ);
+            float influencia = Mathf.Clamp01(fuera / (3f * escala));
+
+            float nx = (px + OffsetRuidoTerrenoX) / escala;
+            float nz = (pz + OffsetRuidoTerrenoZ) / escala;
+
+            float amplio = Mathf.PerlinNoise(nx * 0.035f, nz * 0.035f) - 0.5f;
+            float medio = Mathf.PerlinNoise(nx * 0.09f, nz * 0.09f) - 0.5f;
+            float grueso = Mathf.PerlinNoise(nx * 0.22f, nz * 0.22f) - 0.5f;
+            float fino = Mathf.PerlinNoise(nx * 0.55f, nz * 0.55f) - 0.5f;
+
+            float relieve = (amplio * 2.8f + medio * 1.5f + grueso * 0.6f + fino * 0.22f) * escala;
+            float cuenco = Mathf.Pow(Mathf.Clamp01(fuera / Mathf.Max(radioCuenco, 0.01f)), 1.7f) * alturaCuenco;
+
+            return (relieve + cuenco) * influencia;
+        }
+
+        private float AlturaSueloMundo(float x, float z)
+        {
+            float px = x - _terrenoCentro.x;
+            float pz = z - _terrenoCentro.z;
+            return _terrenoCentro.y + AlturaTerrenoLocalEn(px, pz, _terrenoMitadAncho, _terrenoMitadAlto,
+                _terrenoMargenPlano, _terrenoEscala, _terrenoRadioCuenco, _terrenoAlturaCuenco);
+        }
+
         private static Mesh CrearMallaTerrenoAccidentado(float extension, int resolucion,
-            float mitadAnchoTablero, float mitadAltoTablero, float margenPlano)
+            float mitadAncho, float mitadAlto, float margenPlano, float escala,
+            float radioCuenco, float alturaCuenco)
         {
             int verticesPorLado = resolucion + 1;
             var vertices = new Vector3[verticesPorLado * verticesPorLado];
@@ -418,26 +835,14 @@ namespace TanksGame.Visual
             float paso = extension / resolucion;
             float mitadExtension = extension / 2f;
 
-            const float offsetRuidoX = 137.2f;
-            const float offsetRuidoZ = 84.9f;
-
             for (int z = 0; z <= resolucion; z++)
             {
                 for (int x = 0; x <= resolucion; x++)
                 {
                     float px = -mitadExtension + x * paso;
                     float pz = -mitadExtension + z * paso;
-
-                    float distanciaFueraX = Mathf.Max(0f, Mathf.Abs(px) - (mitadAnchoTablero + margenPlano));
-                    float distanciaFueraZ = Mathf.Max(0f, Mathf.Abs(pz) - (mitadAltoTablero + margenPlano));
-                    float distanciaFuera = Mathf.Sqrt(distanciaFueraX * distanciaFueraX + distanciaFueraZ * distanciaFueraZ);
-                    // Rampa suave de 3 unidades: pasa de plano a accidentado sin
-                    // un escalón brusco en el borde.
-                    float influencia = Mathf.Clamp01(distanciaFuera / 3f);
-
-                    float ruidoGrueso = Mathf.PerlinNoise((px + offsetRuidoX) * 0.12f, (pz + offsetRuidoZ) * 0.12f) - 0.5f;
-                    float ruidoFino = Mathf.PerlinNoise((px + offsetRuidoX) * 0.45f, (pz + offsetRuidoZ) * 0.45f) - 0.5f;
-                    float altura = (ruidoGrueso * 1.3f + ruidoFino * 0.35f) * influencia;
+                    float altura = AlturaTerrenoLocalEn(px, pz, mitadAncho, mitadAlto, margenPlano,
+                        escala, radioCuenco, alturaCuenco);
 
                     int indice = z * verticesPorLado + x;
                     vertices[indice] = new Vector3(px, altura, pz);
@@ -467,94 +872,420 @@ namespace TanksGame.Visual
             mesh.triangles = triangulos;
             mesh.uv = uvs;
             mesh.RecalculateNormals();
+            mesh.RecalculateTangents(); // necesario para que el normal map funcione
             mesh.RecalculateBounds();
             return mesh;
         }
 
-        // Ambientación simple con lo que ya viene con Unity (niebla + color de fondo
-        // de cámara), coherente con el bioma elegido — sin necesitar un skybox nuevo.
-        // Un cono de N lados es la forma más simple que sigue leyéndose como
-        // "montaña" desde cualquier ángulo: base circular cerrada (para que no
-        // se vea hueca por debajo) y una única cumbre centrada. El ruido es
-        // moderado y afecta solo el radio de la base -- versiones anteriores
-        // variaban radio, anillo medio y cumbre por separado y de forma
-        // descentrada, lo que producía siluetas finas tipo "aleta".
-        private static GameObject CrearMontanaIrregular(float radio, float altura, int semilla)
+        // ---------------------------------------------------------------------
+        // GEOMETRÍA DE MONTAÑA
+        //
+        // El ruido angular es COMPARTIDO por todos los anillos, con amplitud
+        // creciente hacia la cumbre: eso genera aristas y canaletas continuas de
+        // la cima al pie, que es lo que hace leer una pared de roca. La malla va
+        // con sombreado plano (vértices sin compartir) para que cada faceta
+        // atrape la luz por separado.
+        // ---------------------------------------------------------------------
+        private static GameObject CrearMontanaIrregular(float radio, float altura, int semilla,
+            float rangoMaxAltura, int lados = 24, bool agujasRocosas = true)
         {
-            const int lados = 12;
+            lados = Mathf.Max(6, lados);
             var rng = new System.Random(semilla);
 
-            var factores = new float[lados];
-            for (int i = 0; i < lados; i++)
-                factores[i] = (float)rng.NextDouble();
+            var perfilAngular = new float[lados];
+            var perfilAgujas = new float[lados];
+            float fase1 = (float)rng.NextDouble() * 10f;
+            float fase2 = (float)rng.NextDouble() * 10f;
+            int armonico = 3 + rng.Next(3);
 
-            // vértices: 0 = centro de la base, 1..lados = anillo de la base,
-            // lados+1 = centro de la tapa inferior duplicado (para poder cerrar
-            // la base con normales hacia abajo), lados+2 = cumbre.
-            var baseAnillo = new Vector3[lados];
             for (int i = 0; i < lados; i++)
             {
-                // Promedia con los vecinos para que el contorno de la base sea
-                // una silueta suave (una colina real no tiene picos aislados en
-                // la base), pero conserva algo de variación entre formaciones.
-                float anterior = factores[(i - 1 + lados) % lados];
-                float siguiente = factores[(i + 1) % lados];
-                float factorSuave = (factores[i] * 2f + anterior + siguiente) / 4f;
-
-                float angulo = i * Mathf.PI * 2f / lados;
-                float r = radio * Mathf.Lerp(0.85f, 1.15f, factorSuave);
-                baseAnillo[i] = new Vector3(Mathf.Cos(angulo) * r, 0f, Mathf.Sin(angulo) * r);
+                float a = (float)i / lados * Mathf.PI * 2f;
+                float ondaGruesa = Mathf.Sin(a * armonico + fase1);
+                float ondaFina = Mathf.Sin(a * (armonico * 2 + 1) + fase2) * 0.45f;
+                float aleatorio = (float)rng.NextDouble() - 0.5f;
+                perfilAngular[i] = Mathf.Clamp(ondaGruesa * 0.6f + ondaFina + aleatorio * 0.55f, -1f, 1f);
+                perfilAgujas[i] = (float)rng.NextDouble();
             }
 
-            var vertices = new Vector3[lados * 2 + 2];
-            vertices[0] = Vector3.zero; // Centro base (cara superior de la base, mirando abajo -- tapa).
+            // (altura relativa, radio relativo, amplitud del perfil angular).
+            Vector3[] anillos = agujasRocosas
+                ? new[]
+                {
+                    new Vector3(0f, 1f, 0.12f),
+                    new Vector3(0.14f, 0.82f, 0.2f),
+                    new Vector3(0.33f, 0.62f, 0.3f),
+                    new Vector3(0.55f, 0.5f, 0.38f),
+                    new Vector3(0.73f, 0.37f, 0.46f),
+                    new Vector3(0.87f, 0.2f, 0.54f)
+                }
+                : new[]
+                {
+                    new Vector3(0f, 1f, 0.16f),
+                    new Vector3(0.32f, 0.72f, 0.22f),
+                    new Vector3(0.64f, 0.42f, 0.26f),
+                    new Vector3(0.87f, 0.18f, 0.3f)
+                };
+
+            Vector3 PuntoAnillo(int anillo, int indice)
+            {
+                var datos = anillos[anillo];
+                float ang = (float)indice / lados * Mathf.PI * 2f;
+                float r = Mathf.Max(radio * 0.04f, radio * datos.y * (1f + perfilAngular[indice] * datos.z));
+                float y = altura * datos.x;
+                if (agujasRocosas && anillo >= anillos.Length - 2)
+                    y += altura * (perfilAgujas[indice] - 0.35f) * 0.18f;
+                return new Vector3(Mathf.Cos(ang) * r, y, Mathf.Sin(ang) * r);
+            }
+
+            float anguloCima = (float)rng.NextDouble() * Mathf.PI * 2f;
+            float offsetCima = radio * 0.2f * (float)rng.NextDouble();
+            var cima = new Vector3(Mathf.Cos(anguloCima) * offsetCima, altura, Mathf.Sin(anguloCima) * offsetCima);
+
+            var vertices = new List<Vector3>(lados * anillos.Length * 6);
+            var uvs = new List<Vector2>(vertices.Capacity);
+            var triangulos = new List<int>(vertices.Capacity);
+            float rango = Mathf.Max(rangoMaxAltura, 0.01f);
+
+            void Cara(Vector3 a, Vector3 b, Vector3 c, float ua, float ub, float uc)
+            {
+                int baseIdx = vertices.Count;
+                vertices.Add(a); vertices.Add(b); vertices.Add(c);
+                uvs.Add(new Vector2(ua, Mathf.Clamp01(a.y / rango)));
+                uvs.Add(new Vector2(ub, Mathf.Clamp01(b.y / rango)));
+                uvs.Add(new Vector2(uc, Mathf.Clamp01(c.y / rango)));
+                triangulos.Add(baseIdx); triangulos.Add(baseIdx + 1); triangulos.Add(baseIdx + 2);
+            }
+
             for (int i = 0; i < lados; i++)
             {
-                vertices[1 + i] = baseAnillo[i];
-                vertices[1 + lados + i] = baseAnillo[i]; // Copia para las caras laterales (normales distintas a la tapa).
+                int sig = (i + 1) % lados;
+                float u0 = (float)i / lados;
+                float u1 = (float)(i + 1) / lados;
+
+                Cara(Vector3.zero, PuntoAnillo(0, i), PuntoAnillo(0, sig), 0f, u0, u1);
+
+                for (int anillo = 0; anillo < anillos.Length - 1; anillo++)
+                {
+                    var abajoI = PuntoAnillo(anillo, i);
+                    var abajoSig = PuntoAnillo(anillo, sig);
+                    var arribaI = PuntoAnillo(anillo + 1, i);
+                    var arribaSig = PuntoAnillo(anillo + 1, sig);
+
+                    Cara(abajoI, arribaI, abajoSig, u0, u0, u1);
+                    Cara(abajoSig, arribaI, arribaSig, u1, u0, u1);
+                }
+
+                var crestaI = PuntoAnillo(anillos.Length - 1, i);
+                var crestaSig = PuntoAnillo(anillos.Length - 1, sig);
+                Cara(crestaI, cima, crestaSig, u0, (u0 + u1) * 0.5f, u1);
             }
-            int cima = lados * 2 + 1;
-            vertices[cima] = new Vector3(0f, altura, 0f); // Cumbre perfectamente centrada.
 
-            var triangulos = new int[lados * 6];
-            for (int i = 0; i < lados; i++)
-            {
-                int siguiente = (i + 1) % lados;
-
-                // Tapa inferior (para que no se vea hueca desde abajo/lados bajos).
-                int b0 = 1 + i, b1 = 1 + siguiente;
-                int t = i * 6;
-                triangulos[t] = 0; triangulos[t + 1] = b0; triangulos[t + 2] = b1;
-
-                // Cara lateral, usando la copia del anillo para no compartir
-                // normales con la tapa.
-                int l0 = 1 + lados + i, l1 = 1 + lados + siguiente;
-                triangulos[t + 3] = l0; triangulos[t + 4] = l1; triangulos[t + 5] = cima;
-            }
-
-            var mesh = new Mesh { name = "MontanaCono" };
-            mesh.vertices = vertices;
-            mesh.triangles = triangulos;
+            var mesh = new Mesh { name = "MontanaIrregular" };
+            if (vertices.Count > 65000)
+                mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            mesh.SetVertices(vertices);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(triangulos, 0);
             mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
             mesh.RecalculateBounds();
+
             var montana = new GameObject("Montana");
             montana.AddComponent<MeshFilter>().sharedMesh = mesh;
-            // IMPORTANTE: a diferencia de GameObject.CreatePrimitive() (que asigna
-            // automáticamente el material correcto para el render pipeline
-            // activo), un MeshRenderer creado a mano queda sin material -- accede
-            // a .material recién cuando alguien lo pide y ahí Unity le pone un
-            // material por defecto que bajo URP se ve plano y deslavado (por eso
-            // las montañas se veían mal sin importar cuánto se ajustara la forma).
-            // Le asignamos el shader Lit de URP explícitamente.
-            montana.AddComponent<MeshRenderer>().material = new Material(ObtenerShaderEstandar());
+            // Un MeshRenderer creado a mano queda sin material (a diferencia de
+            // CreatePrimitive) y bajo URP eso se ve plano y deslavado.
+            var renderer = montana.AddComponent<MeshRenderer>();
+            var material = new Material(ObtenerShaderEstandar());
+            AjustarBrillo(material, 0.06f);
+            renderer.material = material;
             return montana;
+        }
+
+        // ---------------------------------------------------------------------
+        // MATERIALES Y TEXTURAS
+        // ---------------------------------------------------------------------
+        private static void AjustarBrillo(Material material, float brillo)
+        {
+            if (material == null) return;
+            if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", brillo);
+            if (material.HasProperty("_Glossiness")) material.SetFloat("_Glossiness", brillo);
+            if (material.HasProperty("_Metallic")) material.SetFloat("_Metallic", 0f);
+        }
+
+        private static void AsignarNormal(Material material, Texture2D normal, float fuerza)
+        {
+            if (material == null || normal == null) return;
+            if (!material.HasProperty("_BumpMap")) return;
+
+            material.SetTexture("_BumpMap", normal);
+            material.EnableKeyword("_NORMALMAP");
+            if (material.HasProperty("_BumpScale")) material.SetFloat("_BumpScale", fuerza);
+        }
+
+        // Ruido sin costura en X (la textura de montaña da la vuelta al cono).
+        private static float RuidoTileableU(float x, float y, float frecX, float frecY, int ancho)
+        {
+            float a = Mathf.PerlinNoise(x * frecX, y * frecY);
+            float b = Mathf.PerlinNoise((x - ancho) * frecX, y * frecY);
+            return Mathf.Lerp(a, b, x / ancho);
+        }
+
+        // Ruido sin costura en ambos ejes (el suelo se repite muchas veces).
+        private static float RuidoTileable(float x, float y, float frec, int tam)
+        {
+            float fx = x * frec, fy = y * frec;
+            float periodo = tam * frec;
+            float a = Mathf.PerlinNoise(fx, fy);
+            float b = Mathf.PerlinNoise(fx - periodo, fy);
+            float c = Mathf.PerlinNoise(fx, fy - periodo);
+            float d = Mathf.PerlinNoise(fx - periodo, fy - periodo);
+            float u = x / tam, v = y / tam;
+            return Mathf.Lerp(Mathf.Lerp(a, b, u), Mathf.Lerp(c, d, u), v);
+        }
+
+        // Convierte un campo de alturas en un mapa de normales tangente. Se
+        // empaqueta con alfa = 1 para que funcione tanto con el camino RGB como
+        // con el DXT5nm que usa Unity al desempaquetar.
+        private static Texture2D NormalDesdeAlturas(float[] alturas, int tam, float fuerza, string nombre)
+        {
+            var textura = new Texture2D(tam, tam, TextureFormat.RGBA32, false, true)
+            {
+                name = nombre,
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Bilinear
+            };
+
+            for (int y = 0; y < tam; y++)
+            {
+                for (int x = 0; x < tam; x++)
+                {
+                    int xi = (x - 1 + tam) % tam, xd = (x + 1) % tam;
+                    int ya = (y - 1 + tam) % tam, yb = (y + 1) % tam;
+
+                    float dx = alturas[y * tam + xi] - alturas[y * tam + xd];
+                    float dy = alturas[ya * tam + x] - alturas[yb * tam + x];
+
+                    var n = new Vector3(dx * fuerza, dy * fuerza, 1f).normalized;
+                    textura.SetPixel(x, y, new Color(n.x * 0.5f + 0.5f, n.y * 0.5f + 0.5f, n.z * 0.5f + 0.5f, 1f));
+                }
+            }
+
+            textura.Apply();
+            return textura;
+        }
+
+        private static Texture2D _normalTerrenoCache;
+
+        private static Texture2D GenerarNormalTerreno()
+        {
+            if (_normalTerrenoCache != null) return _normalTerrenoCache;
+
+            const int tam = 256;
+            var alturas = new float[tam * tam];
+            for (int y = 0; y < tam; y++)
+                for (int x = 0; x < tam; x++)
+                    alturas[y * tam + x] = RuidoTileable(x, y, 0.05f, tam) * 0.55f
+                                           + RuidoTileable(x, y, 0.16f, tam) * 0.3f
+                                           + RuidoTileable(x, y, 0.42f, tam) * 0.15f;
+
+            _normalTerrenoCache = NormalDesdeAlturas(alturas, tam, 14f, "NormalTerreno");
+            return _normalTerrenoCache;
+        }
+
+        private static Texture2D _normalMontanaCache;
+
+        private static Texture2D GenerarNormalMontana()
+        {
+            if (_normalMontanaCache != null) return _normalMontanaCache;
+
+            const int tam = 256;
+            var alturas = new float[tam * tam];
+            for (int y = 0; y < tam; y++)
+                for (int x = 0; x < tam; x++)
+                    // Mismo patrón que la textura: canaletas verticales marcadas
+                    // (frecuencia alta en X, baja en Y) más grano de roca.
+                    alturas[y * tam + x] = RuidoTileableU(x, y, 0.05f, 0.008f, tam) * 0.6f
+                                           + RuidoTileableU(x, y, 0.2f, 0.03f, tam) * 0.28f
+                                           + RuidoTileableU(x, y, 0.45f, 0.45f, tam) * 0.12f;
+
+            _normalMontanaCache = NormalDesdeAlturas(alturas, tam, 22f, "NormalMontana");
+            return _normalMontanaCache;
+        }
+
+        private static Texture2D _texturaMontanaCache;
+        private static Color _texturaMontanaRoca, _texturaMontanaCumbre;
+
+        // Bandas por cota real (UV.v = altura mundial normalizada): pasto al pie,
+        // pedrera, pared de roca cálida, roca gris y cumbre clara, con estrías
+        // verticales encima. Solo los picos altos llegan a la banda clara.
+        private static Texture2D GenerarTexturaMontana(Color colorRoca, Color colorCumbre)
+        {
+            if (_texturaMontanaCache != null && _texturaMontanaRoca == colorRoca && _texturaMontanaCumbre == colorCumbre)
+                return _texturaMontanaCache;
+
+            const int ancho = 256;
+            const int alto = 512;
+            var textura = new Texture2D(ancho, alto, TextureFormat.RGB24, false)
+            {
+                wrapModeU = TextureWrapMode.Repeat,
+                wrapModeV = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear
+            };
+
+            Color pradera = Color.Lerp(colorRoca, new Color(0.26f, 0.34f, 0.16f), 0.65f);
+            Color pedrera = Color.Lerp(colorRoca, new Color(0.76f, 0.72f, 0.63f), 0.6f);
+            Color rocaCalida = Color.Lerp(colorRoca, new Color(0.64f, 0.52f, 0.36f), 0.5f);
+            Color rocaClara = Color.Lerp(colorRoca, new Color(0.8f, 0.78f, 0.74f), 0.6f);
+
+            for (int y = 0; y < alto; y++)
+            {
+                float t = (float)y / (alto - 1);
+
+                Color franja;
+                if (t < 0.1f) franja = Color.Lerp(pradera, pedrera, t / 0.1f);
+                else if (t < 0.28f) franja = Color.Lerp(pedrera, rocaCalida, (t - 0.1f) / 0.18f);
+                else if (t < 0.62f) franja = Color.Lerp(rocaCalida, rocaClara, (t - 0.28f) / 0.34f);
+                else franja = Color.Lerp(rocaClara, colorCumbre, (t - 0.62f) / 0.38f);
+
+                for (int x = 0; x < ancho; x++)
+                {
+                    float canaletaGruesa = RuidoTileableU(x, y, 0.05f, 0.008f, ancho) - 0.5f;
+                    float canaletaFina = RuidoTileableU(x, y, 0.2f, 0.03f, ancho) - 0.5f;
+                    float estrato = Mathf.PerlinNoise(x * 0.01f, y * 0.18f) - 0.5f;
+                    float grano = RuidoTileableU(x, y, 0.45f, 0.45f, ancho) - 0.5f;
+
+                    float sombreado = canaletaGruesa * 0.45f + canaletaFina * 0.22f
+                                      + estrato * 0.12f + grano * 0.09f;
+                    sombreado *= Mathf.Lerp(0.4f, 1.2f, Mathf.Clamp01((t - 0.08f) / 0.5f));
+
+                    var color = franja * (1f + sombreado);
+                    color.r = Mathf.Clamp01(color.r);
+                    color.g = Mathf.Clamp01(color.g);
+                    color.b = Mathf.Clamp01(color.b);
+                    textura.SetPixel(x, y, color);
+                }
+            }
+
+            textura.Apply();
+            _texturaMontanaCache = textura;
+            _texturaMontanaRoca = colorRoca;
+            _texturaMontanaCumbre = colorCumbre;
+            return textura;
+        }
+
+        private static Texture2D _texturaCeldaCache;
+        private static Color _texturaCeldaColor;
+
+        // Textura de cada celda del tablero: la misma familia de ruido que el
+        // suelo exterior (para que el césped del campo de juego se sienta del
+        // mismo material que el valle) más un borde oscuro marcado en los
+        // cuatro lados, que es lo que da la cuadrícula contrastada. Antes la
+        // celda era un color plano y el "grid" solo se notaba por el hueco de
+        // separación entre cubos, muy sutil a distancia.
+        private static Texture2D GenerarTexturaCelda(Color colorCelda)
+        {
+            if (_texturaCeldaCache != null && _texturaCeldaColor == colorCelda)
+                return _texturaCeldaCache;
+
+            const int tam = 128;
+            var textura = new Texture2D(tam, tam, TextureFormat.RGB24, false)
+            {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear
+            };
+
+            Color pastoClaro = Color.Lerp(colorCelda, new Color(0.55f, 0.62f, 0.32f), 0.35f);
+            Color pastoOscuro = Color.Lerp(colorCelda, new Color(0.18f, 0.26f, 0.11f), 0.4f);
+            Color borde = colorCelda * 0.45f;
+
+            const int grosorBorde = 6;
+
+            for (int y = 0; y < tam; y++)
+            {
+                for (int x = 0; x < tam; x++)
+                {
+                    float macro = RuidoTileable(x, y, 0.03f, tam);
+                    float fino = RuidoTileable(x, y, 0.12f, tam);
+
+                    var color = Color.Lerp(pastoOscuro, pastoClaro, Mathf.SmoothStep(0.3f, 0.7f, macro));
+                    color *= 1f + (fino - 0.5f) * 0.15f;
+
+                    int distanciaBorde = Mathf.Min(Mathf.Min(x, tam - 1 - x), Mathf.Min(y, tam - 1 - y));
+                    if (distanciaBorde < grosorBorde)
+                    {
+                        float t = 1f - (float)distanciaBorde / grosorBorde;
+                        color = Color.Lerp(color, borde, t * t);
+                    }
+
+                    color.r = Mathf.Clamp01(color.r);
+                    color.g = Mathf.Clamp01(color.g);
+                    color.b = Mathf.Clamp01(color.b);
+                    textura.SetPixel(x, y, color);
+                }
+            }
+
+            textura.Apply();
+            _texturaCeldaCache = textura;
+            _texturaCeldaColor = colorCelda;
+            return textura;
+        }
+
+        private static Texture2D _texturaTerrenoCache;
+        private static Color _texturaTerrenoColor;
+
+        // Suelo del valle: pasto verde, pasto seco, calvas de tierra y gravilla,
+        // mezclados con ruido en cuatro escalas y sin costura al repetirse.
+        private static Texture2D GenerarTexturaTerreno(Color colorSuelo)
+        {
+            if (_texturaTerrenoCache != null && _texturaTerrenoColor == colorSuelo)
+                return _texturaTerrenoCache;
+
+            const int tam = 256;
+            var textura = new Texture2D(tam, tam, TextureFormat.RGB24, false)
+            {
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Bilinear
+            };
+
+            Color pastoVivo = Color.Lerp(colorSuelo, new Color(0.26f, 0.38f, 0.15f), 0.6f);
+            Color pastoSeco = Color.Lerp(colorSuelo, new Color(0.58f, 0.52f, 0.28f), 0.55f);
+            Color tierra = Color.Lerp(colorSuelo, new Color(0.31f, 0.24f, 0.16f), 0.6f);
+            Color gravilla = Color.Lerp(colorSuelo, new Color(0.62f, 0.6f, 0.55f), 0.7f);
+
+            for (int y = 0; y < tam; y++)
+            {
+                for (int x = 0; x < tam; x++)
+                {
+                    float macro = RuidoTileable(x, y, 0.008f, tam);
+                    float medio = RuidoTileable(x, y, 0.035f, tam);
+                    float fino = RuidoTileable(x, y, 0.13f, tam);
+                    float micro = RuidoTileable(x, y, 0.4f, tam);
+
+                    var color = Color.Lerp(pastoVivo, pastoSeco,
+                        Mathf.SmoothStep(0.32f, 0.7f, macro + (medio - 0.5f) * 0.35f));
+                    color = Color.Lerp(color, tierra, Mathf.SmoothStep(0.58f, 0.86f, medio));
+                    color = Color.Lerp(color, gravilla, Mathf.SmoothStep(0.72f, 0.94f, fino) * 0.6f);
+
+                    // El micro-ruido hace de sombra de las piedrecillas y le da
+                    // grano; combinado con el normal map se lee como suelo real.
+                    float sombreado = (fino - 0.5f) * 0.2f + (micro - 0.5f) * 0.26f;
+                    color *= (1f + sombreado);
+                    color.r = Mathf.Clamp01(color.r);
+                    color.g = Mathf.Clamp01(color.g);
+                    color.b = Mathf.Clamp01(color.b);
+                    textura.SetPixel(x, y, color);
+                }
+            }
+
+            textura.Apply();
+            _texturaTerrenoCache = textura;
+            _texturaTerrenoColor = colorSuelo;
+            return textura;
         }
 
         private static Shader _shaderEstandarCache;
 
-        // Busca el shader Lit de URP una sola vez (con caídas de respaldo por si
-        // el proyecto usara Simple Lit o el pipeline integrado). El resultado se
-        // cachea porque Shader.Find no es gratis.
         private static Shader ObtenerShaderEstandar()
         {
             if (_shaderEstandarCache != null) return _shaderEstandarCache;
@@ -566,75 +1297,137 @@ namespace TanksGame.Visual
             return _shaderEstandarCache;
         }
 
-        // Dos puestos militares decorativos en la entrada del valle, uno por lado.
-        // No tienen collider y por tanto no afectan la lÃ³gica del tablero.
-        private void ConstruirCampamentos(int ancho, int alto)
+        // ---------------------------------------------------------------------
+        // CAMPAMENTOS
+        // ---------------------------------------------------------------------
+        private void CalcularPosicionesCampamentos(int ancho, int alto)
         {
-            contenedorCampamentos = new GameObject("CampamentosMilitares").transform;
-            contenedorCampamentos.SetParent(transform, false);
+            posicionesCampamentos.Clear();
 
-            var centro = new Vector3((ancho - 1) * tamanoCelda * 0.5f, 0f,
-                (alto - 1) * tamanoCelda * 0.5f);
-            var haciaCamara = Camera.main != null ? Camera.main.transform.position - centro : new Vector3(-1f, 0f, -1f);
-            haciaCamara.y = 0f;
-            haciaCamara.Normalize();
+            var haciaCamara = DireccionHaciaCamara();
+            float margen = _u * distanciaEdificios;
+            float distanciaAncla = DistanciaCentroABorde(haciaCamara, _mitadAncho, _mitadAlto) + margen;
 
-            float mitadAncho = ancho * tamanoCelda / 2f;
-            float mitadAlto = alto * tamanoCelda / 2f;
-            // Espacio libre entre el borde del tablero y la base: fijo en celdas,
-            // apenas el necesario para que no se pise con el tablero pero sin
-            // alejarse de la frontera.
-            float margen = tamanoCelda * 2f;
-
-            float distanciaAncla = DistanciaCentroABorde(haciaCamara, mitadAncho, mitadAlto) + margen;
-
-            // En vez de alinear los 3 puestos en una recta perpendicular a la
-            // cámara (eso los hacía "hundirse" hacia el tablero en un extremo y
-            // alejarse de más en el otro, porque la esquina real del tablero es
-            // angulosa), cada puesto gira un poco más de ángulo respecto al
-            // centro y recalcula SU PROPIA distancia al borde. Así el grupo
-            // sigue el contorno real del rectángulo, abrazando la esquina de
-            // forma pareja.
-            float espaciadoDeseado = tamanoCelda * 2.4f;
+            float espaciado = _u * 1.85f;
             float anguloBase = Mathf.Atan2(haciaCamara.z, haciaCamara.x);
-            float anguloPaso = espaciadoDeseado / Mathf.Max(distanciaAncla, 0.01f);
+            float anguloPaso = espaciado / Mathf.Max(distanciaAncla, 0.01f);
 
-            // Más puestos por flanco en tableros grandes: en 8x8 alcanza con 3,
-            // pero en 20x20 el borde es mucho más largo y con solo 3 la base se
-            // ve como un puntito perdido en medio de tanto espacio vacío.
-            int puestosPorFlanco = Mathf.Clamp(Mathf.RoundToInt((ancho + alto) * 0.18f) + 2, 3, 8);
+            // El número de puestos sigue el perímetro frontal real, así que un
+            // tablero grande tiene más base militar en vez de los mismos tres.
+            // Antes el multiplicador (0.16) dejaba huecos vacíos en los flancos
+            // de tableros medianos; con 0.24 y un tope más alto se llena mejor
+            // la franja lateral que antes quedaba solo con árboles.
+            int puestosPorFlanco = Mathf.Clamp(Mathf.RoundToInt((ancho + alto) * 0.24f), 2, 10);
 
             for (int lado = 0; lado < 2; lado++)
             {
                 float signo = lado == 0 ? 1f : -1f;
                 for (int i = 0; i < puestosPorFlanco; i++)
                 {
-                    float angulo = anguloBase + signo * (i + 1) * anguloPaso;
+                    float angulo = anguloBase + signo * (i + 0.6f) * anguloPaso;
                     var direccion = new Vector3(Mathf.Cos(angulo), 0f, Mathf.Sin(angulo));
-                    float distancia = DistanciaCentroABorde(direccion, mitadAncho, mitadAlto) + margen;
-                    var posicion = centro + direccion * distancia;
-
-                    CrearCampamento(posicion, lado * puestosPorFlanco + i + 1, centro);
+                    float distancia = DistanciaCentroABorde(direccion, _mitadAncho, _mitadAlto) + margen;
+                    posicionesCampamentos.Add(_centroTablero + direccion * distancia);
                 }
             }
         }
 
-        private void CrearCampamento(Vector3 centro, int indice, Vector3 centroTablero)
+        private void ConstruirCampamentos()
+        {
+            contenedorCampamentos = new GameObject("CampamentosMilitares").transform;
+            contenedorCampamentos.SetParent(transform, false);
+
+            // Se resetea aquí (no dentro de CrearCampamento) porque el objetivo
+            // es que NINGÚN puesto repita el tipo de edificio de su vecino
+            // inmediato en la lista, no solo dentro de sí mismo.
+            _ultimoIndicePrefabEdificio = -1;
+
+            for (int i = 0; i < posicionesCampamentos.Count; i++)
+                CrearCampamento(posicionesCampamentos[i], i + 1);
+        }
+
+        // Índice del prefab de edificio usado en el puesto anterior, para que
+        // ConstruirCampamentos() pueda pedirle al siguiente que no se repita.
+        private int _ultimoIndicePrefabEdificio = -1;
+
+        private void CrearCampamento(Vector3 centro, int indice)
         {
             var campamento = new GameObject($"Campamento_{indice}").transform;
             campamento.SetParent(contenedorCampamentos, false);
-            campamento.localPosition = centro;
-            // Reduce la huella real del campamento (antes ~3.8 de ancho por la
-            // cerca perimetral) para poder agrupar los 3 puestos de cada flanco
-            // sin que se toquen y sin tener que alejarlos demasiado del tablero.
-            campamento.localScale = Vector3.one * 0.72f;
+            campamento.localPosition = new Vector3(centro.x, AlturaSueloMundo(centro.x, centro.z), centro.z);
 
-            // La base mira hacia el centro del tablero, como un puesto avanzado
-            // vigilando el campo de batalla, en vez de tener una orientación fija.
-            var haciaCentro = centroTablero - centro;
+            var haciaCentro = _centroTablero - centro;
             haciaCentro.y = 0f;
             if (haciaCentro.sqrMagnitude > 0.0001f)
                 campamento.localRotation = Quaternion.LookRotation(haciaCentro.normalized, Vector3.up);
+
+            // Si el usuario asignó prefabs propios (por ejemplo los de un asset
+            // como ithappy Military_Free), se usan esos en vez de las primitivas
+            // generadas por código: se elige uno por puesto (y, si
+            // 'edificiosPorPuesto' es mayor a 1, se agrupan varios alrededor del
+            // mismo punto para formar un mini-campamento con piezas reales).
+            if (prefabsEdificios != null && prefabsEdificios.Length > 0)
+            {
+                campamento.localScale = Vector3.one; // la escala la trae cada prefab
+                var rngPuesto = new System.Random(indice * 7919 + 13);
+
+                for (int e = 0; e < edificiosPorPuesto; e++)
+                {
+                    int indicePrefab;
+                    if (e == 0 && prefabsEdificios.Length > 1)
+                    {
+                        // "Salteados, no consecutivos": si hay más de un tipo
+                        // disponible, se descarta el mismo índice que usó el
+                        // puesto inmediatamente anterior antes de sortear.
+                        do { indicePrefab = rngPuesto.Next(prefabsEdificios.Length); }
+                        while (indicePrefab == _ultimoIndicePrefabEdificio);
+                        _ultimoIndicePrefabEdificio = indicePrefab;
+                    }
+                    else
+                    {
+                        indicePrefab = rngPuesto.Next(prefabsEdificios.Length);
+                    }
+
+                    var prefab = prefabsEdificios[indicePrefab];
+                    if (prefab == null) continue;
+
+                    var instancia = Instantiate(prefab, campamento);
+
+                    // Las torres suelen venir modeladas mucho más altas que el
+                    // resto de piezas del set; se detectan por nombre y reciben
+                    // una escala extra multiplicativa aparte, sin tocar el
+                    // tamaño del resto de edificios.
+                    bool esTorre = prefab.name.IndexOf("Tower", System.StringComparison.OrdinalIgnoreCase) >= 0
+                                   || prefab.name.IndexOf("Torre", System.StringComparison.OrdinalIgnoreCase) >= 0;
+                    float escalaFinal = escalaPrefabsEdificios * _escalaObjetos * (esTorre ? escalaExtraTorres : 1f);
+                    instancia.transform.localScale = Vector3.one * escalaFinal;
+
+                    // El primero queda centrado en el punto del puesto; el resto
+                    // se reparte alrededor para no superponerse.
+                    if (e == 0)
+                    {
+                        instancia.transform.localPosition = Vector3.zero;
+                    }
+                    else
+                    {
+                        float angulo = (float)rngPuesto.NextDouble() * Mathf.PI * 2f;
+                        float distancia = Mathf.Lerp(1.2f, 2.2f, (float)rngPuesto.NextDouble()) * _escalaObjetos;
+                        instancia.transform.localPosition =
+                            new Vector3(Mathf.Cos(angulo) * distancia, 0f, Mathf.Sin(angulo) * distancia);
+                    }
+                    instancia.transform.localRotation = Quaternion.Euler(0f, (float)rngPuesto.NextDouble() * 360f, 0f);
+                }
+                return;
+            }
+
+            CrearCampamentoProcedural(campamento, indice);
+        }
+
+        // Versión anterior, íntegra: primitivas generadas por código. Se usa
+        // como respaldo cuando no se asignan prefabs propios en el Inspector.
+        private void CrearCampamentoProcedural(Transform campamento, int indice)
+        {
+            campamento.localScale = Vector3.one * 0.72f * _escalaObjetos;
 
             Color lona = indice % 3 == 1 ? new Color(0.22f, 0.32f, 0.16f) : new Color(0.33f, 0.25f, 0.14f);
             Color madera = new Color(0.22f, 0.15f, 0.08f);
@@ -648,58 +1441,44 @@ namespace TanksGame.Visual
             CrearPieza(campamento, PrimitiveType.Cube, new Vector3(-0.25f, 0.14f, 0.95f), new Vector3(0.8f, 0.28f, 0.55f), lona);
             CrearPieza(campamento, PrimitiveType.Cube, new Vector3(0.95f, 0.16f, 0.75f), new Vector3(0.55f, 0.32f, 0.55f), madera);
             for (int i = 0; i < 4; i++)
-                CrearPieza(campamento, PrimitiveType.Cube, new Vector3(0.75f + (i % 2) * 0.26f, 0.12f + (i / 2) * 0.2f, -0.6f),
+                CrearPieza(campamento, PrimitiveType.Cube,
+                    new Vector3(0.75f + (i % 2) * 0.26f, 0.12f + (i / 2) * 0.2f, -0.6f),
                     new Vector3(0.23f, 0.2f, 0.23f), madera);
             for (int i = 0; i < 3; i++)
                 CrearPieza(campamento, PrimitiveType.Cylinder, new Vector3(-0.85f + i * 0.28f, 0.16f, 0.72f),
                     new Vector3(0.13f, 0.16f, 0.13f), saco);
 
             for (int i = 0; i < 5; i++)
-            {
-                float x = -0.8f + i * 0.35f;
-                CrearPieza(campamento, PrimitiveType.Capsule, new Vector3(x, 0.12f, -0.55f),
+                CrearPieza(campamento, PrimitiveType.Capsule, new Vector3(-0.8f + i * 0.35f, 0.12f, -0.55f),
                     new Vector3(0.2f, 0.12f, 0.2f), saco);
-            }
 
-            // Techo triangular sobre la tienda principal (dos tapas inclinadas)
-            // en vez de una caja plana, para que se lea como una carpa de verdad.
+            // Techo triangular sobre la tienda principal (dos tapas inclinadas).
             CrearPieza(campamento, PrimitiveType.Cube, new Vector3(-0.55f, 0.4f, 0.1f),
                 new Vector3(1.15f, 0.28f, 0.7f), lona, Quaternion.Euler(0f, 0f, 20f));
             CrearPieza(campamento, PrimitiveType.Cube, new Vector3(-0.55f, 0.4f, 0.1f),
                 new Vector3(1.15f, 0.28f, 0.7f), lona, Quaternion.Euler(0f, 0f, -20f));
 
-            // Torre de vigilancia sobre pilotes, con plataforma y techo -- da altura
-            // al conjunto y una silueta reconocible desde lejos.
+            // Torre de vigilancia sobre pilotes.
             float torreX = 1.5f;
             for (int i = 0; i < 4; i++)
-            {
-                float px = torreX + ((i % 2) - 0.5f) * 0.5f;
-                float pz = 0.1f + ((i / 2) - 0.5f) * 0.5f;
-                CrearPieza(campamento, PrimitiveType.Cylinder, new Vector3(px, 0.55f, pz),
+                CrearPieza(campamento, PrimitiveType.Cylinder,
+                    new Vector3(torreX + ((i % 2) - 0.5f) * 0.5f, 0.55f, 0.1f + ((i / 2) - 0.5f) * 0.5f),
                     new Vector3(0.06f, 0.55f, 0.06f), madera);
-            }
-            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(torreX, 1.12f, 0.1f),
-                new Vector3(0.85f, 0.08f, 0.85f), madera);
-            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(torreX, 1.4f, 0.1f),
-                new Vector3(0.65f, 0.5f, 0.05f), lona);
-            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(torreX, 1.68f, 0.1f),
-                new Vector3(0.75f, 0.06f, 0.75f), madera, Quaternion.Euler(15f, 0f, 0f));
+            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(torreX, 1.12f, 0.1f), new Vector3(0.85f, 0.08f, 0.85f), madera);
+            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(torreX, 1.4f, 0.1f), new Vector3(0.65f, 0.5f, 0.05f), lona);
+            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(torreX, 1.68f, 0.1f), new Vector3(0.75f, 0.06f, 0.75f),
+                madera, Quaternion.Euler(15f, 0f, 0f));
 
-            // Mástil con bandera propia (distinta del banderín del tanque) marcando
-            // el territorio de la base.
-            CrearPieza(campamento, PrimitiveType.Cylinder, new Vector3(0f, 1.0f, -1.1f),
-                new Vector3(0.04f, 1.0f, 0.04f), madera);
-            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(0.28f, 1.75f, -1.1f),
-                new Vector3(0.5f, 0.3f, 0.02f), lona);
+            // Mástil con bandera.
+            CrearPieza(campamento, PrimitiveType.Cylinder, new Vector3(0f, 1.0f, -1.1f), new Vector3(0.04f, 1.0f, 0.04f), madera);
+            CrearPieza(campamento, PrimitiveType.Cube, new Vector3(0.28f, 1.75f, -1.1f), new Vector3(0.5f, 0.3f, 0.02f), lona);
 
-            // Cerca perimetral baja de estacas, para delimitar visualmente el
-            // puesto sin bloquear la vista del tablero.
+            // Cerca perimetral baja de estacas.
             for (int i = 0; i < 10; i++)
             {
                 float angulo = i / 10f * Mathf.PI * 1.3f + Mathf.PI * 0.15f;
-                float ex = Mathf.Cos(angulo) * 1.9f;
-                float ez = Mathf.Sin(angulo) * 1.9f - 0.3f;
-                CrearPieza(campamento, PrimitiveType.Cylinder, new Vector3(ex, 0.18f, ez),
+                CrearPieza(campamento, PrimitiveType.Cylinder,
+                    new Vector3(Mathf.Cos(angulo) * 1.9f, 0.18f, Mathf.Sin(angulo) * 1.9f - 0.3f),
                     new Vector3(0.04f, 0.18f, 0.04f), madera);
             }
         }
@@ -713,30 +1492,61 @@ namespace TanksGame.Visual
             pieza.transform.localRotation = rotacionLocal ?? Quaternion.identity;
             pieza.transform.localScale = escala;
             var renderer = pieza.GetComponent<Renderer>();
-            if (renderer != null) renderer.material.color = color;
+            if (renderer != null)
+            {
+                renderer.material.color = color;
+                AjustarBrillo(renderer.material, 0.05f);
+            }
             var collider = pieza.GetComponent<Collider>();
             if (collider != null) Destroy(collider);
         }
 
-        private void AplicarAmbienteBioma(Color colorNiebla)
+        private static void PintarYLimpiar(GameObject objetivo, Color color)
         {
-            RenderSettings.fog = false;
-            RenderSettings.fogColor = colorNiebla;
-            RenderSettings.fogMode = FogMode.Linear;
-            RenderSettings.fogStartDistance = Mathf.Max(tamanoCelda * 6f, 6f);
-            RenderSettings.fogEndDistance = Mathf.Max(tamanoCelda * 24f, 24f);
-
-            var camara = Camera.main;
-            if (camara != null)
-                camara.backgroundColor = colorNiebla;
+            var renderer = objetivo.GetComponent<Renderer>();
+            if (renderer != null) renderer.material.color = color;
+            var collider = objetivo.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
         }
 
-        // Mueve (o crea si no existen aún) los marcadores visuales de cada tanque
-        // a su posición actual en el tablero lógico, con una animación de
-        // desplazamiento en vez de saltar instantáneamente (movimiento "realista").
+        // La niebla arranca más allá del paisaje cercano, así que solo lava la
+        // sierra del fondo y no el campo de juego.
+        private void AplicarAmbienteBioma(Color colorNiebla)
+        {
+            float lado = Mathf.Max(_mitadAncho, _mitadAlto) * 2f;
+
+            RenderSettings.fog = nieblaLejana;
+            RenderSettings.fogColor = colorNiebla;
+            RenderSettings.fogMode = FogMode.Linear;
+            RenderSettings.fogStartDistance = Mathf.Max(lado * 1.7f, 26f * _escalaObjetos);
+            RenderSettings.fogEndDistance = Mathf.Max(lado * 4.5f, 90f * _escalaObjetos);
+
+            var camara = Camera.main;
+            if (camara != null) camara.backgroundColor = colorNiebla;
+        }
+
+        // ---------------------------------------------------------------------
+        // TANQUES
+        // ---------------------------------------------------------------------
+        // Versión original: sigue funcionando exactamente igual que antes (así
+        // el código que ya la llama no se rompe). Internamente delega en la
+        // versión nueva asumiendo vida al 100%.
         public void ActualizarTanques(IEnumerable<(int playerId, Vector2Int posicion, bool vivo, TanqueSkinDatos skin)> tanques)
         {
-            foreach (var (playerId, posicion, vivo, skin) in tanques)
+            var conVida = new List<(int, Vector2Int, bool, int, TanqueSkinDatos)>();
+            foreach (var t in tanques) conVida.Add((t.playerId, t.posicion, t.vivo, 100, t.skin));
+            ActualizarTanques(conVida);
+        }
+
+        // Versión nueva: igual que la anterior, pero además recibe el
+        // porcentaje de vida (0-100) de cada tanque para mostrar su estado --
+        // dañado a partir de 50% (chapa oscurecida y humo) y completamente
+        // incinerado y volcado a 0%. Úsala desde el GameManager pasando la
+        // vida real de cada tanque en vez de la sobrecarga de arriba.
+        public void ActualizarTanques(
+            IEnumerable<(int playerId, Vector2Int posicion, bool vivo, int vidaPorcentaje, TanqueSkinDatos skin)> tanques)
+        {
+            foreach (var (playerId, posicion, vivo, vidaPorcentaje, skin) in tanques)
             {
                 if (!tanquesVisuales.TryGetValue(playerId, out var visual))
                 {
@@ -755,11 +1565,6 @@ namespace TanksGame.Visual
                         var renderer = go.GetComponent<Renderer>();
                         if (renderer != null)
                         {
-                            // Antes acá se pintaba con un color fijo por jugador
-                            // (colorJugador1/colorJugador2, y CUALQUIER jugador 3+
-                            // quedaba con colorJugador2) -- ahora usa el
-                            // patrón+color que se eligió en la pantalla de
-                            // programación, igual que en la vista previa de ahí.
                             var colorBase = PaletaSkins.ObtenerColorPrincipal(skin.Color);
                             renderer.material.mainTexture = PaletaSkins.GenerarTexturaPatron(skin.Patron, colorBase);
                             renderer.material.color = Color.white;
@@ -772,7 +1577,6 @@ namespace TanksGame.Visual
                     visual = go.transform;
                     tanquesVisuales[playerId] = visual;
 
-                    // La primera vez no hay "desde dónde" animar: se coloca directo.
                     visual.localPosition = CeldaAPosicionMundo(posicion.x, posicion.y);
                     AsentarSobreCelda(visual);
                 }
@@ -780,10 +1584,12 @@ namespace TanksGame.Visual
                 visual.gameObject.SetActive(vivo);
                 if (!vivo) continue;
 
+                AplicarEstadoDeDano(visual, vidaPorcentaje);
+
                 var destino = CeldaAPosicionMundo(posicion.x, posicion.y);
                 if (Vector3.Distance(new Vector3(visual.localPosition.x, 0f, visual.localPosition.z),
                         new Vector3(destino.x, 0f, destino.z)) < 0.001f)
-                    continue; // ya está ahí, no hace falta animar.
+                    continue;
 
                 if (movimientosEnCurso.TryGetValue(playerId, out var enCurso) && enCurso != null)
                     StopCoroutine(enCurso);
@@ -792,9 +1598,87 @@ namespace TanksGame.Visual
             }
         }
 
-        // Pinta TODOS los materiales del prefab real con el patrón+color elegido
-        // (igual que la vista previa 3D de la pantalla de programación) y le agrega
-        // la etiqueta flotante con calcomanía/número/bandera.
+        // Oscurece la chapa y agrega humo a partir de 50% de vida, y a 0% deja
+        // el tanque volcado y ennegrecido con más humo. Es puramente visual:
+        // no toca vida ni lógica de juego. El estado se recuerda por tanque
+        // (en el humo/inclinación ya aplicados) para no recrear el efecto en
+        // cada frame si la vida no cambió.
+        private readonly Dictionary<int, int> _ultimaVidaVisual = new Dictionary<int, int>();
+
+        private void AplicarEstadoDeDano(Transform visual, int vidaPorcentaje)
+{
+    // Obtiene un código de hash entero único a partir de la estructura EntityId
+    int idVisual = visual.GetEntityId().GetHashCode(); 
+
+    if (_ultimaVidaVisual.TryGetValue(idVisual, out int vidaAnterior) && vidaAnterior == vidaPorcentaje)
+        return;
+    _ultimaVidaVisual[idVisual] = vidaPorcentaje;
+
+    var humoExistente = visual.Find("HumoDano");
+    if (humoExistente != null) Destroy(humoExistente.gameObject);
+
+    float dano = 1f - Mathf.Clamp01(vidaPorcentaje / 100f);
+
+    var propBlock = new MaterialPropertyBlock();
+
+    foreach (var renderer in visual.GetComponentsInChildren<Renderer>())
+    {
+        if (renderer.gameObject.name == "HumoDano") continue;
+
+        renderer.GetPropertyBlock(propBlock);
+
+        Color colorBase = renderer.sharedMaterial.HasProperty("_BaseColor") 
+            ? renderer.sharedMaterial.GetColor("_BaseColor") 
+            : renderer.sharedMaterial.color;
+
+        var colorQuemado = Color.Lerp(colorBase, new Color(0.05f, 0.05f, 0.05f), dano * 0.85f);
+
+        propBlock.SetColor("_Color", colorQuemado);      
+        propBlock.SetColor("_BaseColor", colorQuemado);  
+
+        renderer.SetPropertyBlock(propBlock);
+    }
+
+    if (vidaPorcentaje <= 0)
+    {
+        visual.localRotation *= Quaternion.Euler(0f, 0f, 80f);
+        CrearHumoDano(visual, intensidadAlta: true);
+    }
+    else if (vidaPorcentaje <= 50)
+    {
+        CrearHumoDano(visual, intensidadAlta: false);
+    }
+}
+
+        private void CrearHumoDano(Transform visual, bool intensidadAlta)
+        {
+            var humoGo = new GameObject("HumoDano");
+            humoGo.transform.SetParent(visual, false);
+            humoGo.transform.localPosition = new Vector3(0f, 0.5f, 0f);
+
+            var sistema = humoGo.AddComponent<ParticleSystem>();
+            var principal = sistema.main;
+            principal.startColor = intensidadAlta
+                ? new Color(0.1f, 0.1f, 0.1f, 0.85f)
+                : new Color(0.35f, 0.35f, 0.35f, 0.5f);
+            principal.startSize = intensidadAlta ? 0.35f : 0.22f;
+            principal.startSpeed = intensidadAlta ? 1.2f : 0.6f;
+            principal.startLifetime = intensidadAlta ? 1.4f : 1.0f;
+            principal.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            var emision = sistema.emission;
+            emision.rateOverTime = intensidadAlta ? 14f : 6f;
+
+            var forma = sistema.shape;
+            forma.shapeType = ParticleSystemShapeType.Cone;
+            forma.angle = 12f;
+            forma.radius = 0.1f;
+
+            var renderer = humoGo.GetComponent<ParticleSystemRenderer>();
+            if (renderer != null)
+                renderer.material = new Material(ObtenerShaderEstandar());
+        }
+
         private void AplicarSkinAMateriales(GameObject raiz, TanqueSkinDatos skin)
         {
             var colorBase = PaletaSkins.ObtenerColorPrincipal(skin.Color);
@@ -812,10 +1696,6 @@ namespace TanksGame.Visual
             CrearEtiquetaFlotante(raiz.transform, skin);
         }
 
-        // Texto flotante arriba del tanque (calcomanía + número) más un mini
-        // "banderín" de color -- así la personalización elegida en la pantalla de
-        // programación también se nota en el campo de batalla, no solo en la vista
-        // previa de esa pantalla.
         private void CrearEtiquetaFlotante(Transform padreTanque, TanqueSkinDatos skin)
         {
             var etiquetaGo = new GameObject("Etiqueta");
@@ -845,30 +1725,47 @@ namespace TanksGame.Visual
             Vector3 origen = visual.localPosition;
             Vector3 direccionMovimiento = destinoLocal - origen;
 
-            // Gira el tanque hacia donde se está moviendo (además de desplazarlo),
-            // para que el movimiento se sienta menos "flotante".
+            // Antes la rotación se fijaba de golpe (LookRotation) en el primer
+            // frame del movimiento: un giro instantáneo de cualquier ángulo, por
+            // eso se veía brusco al cambiar de dirección. Ahora se gira de forma
+            // gradual con RotateTowards a una velocidad angular fija, en
+            // paralelo al desplazamiento -- si el giro necesario es grande, el
+            // tanque avanza mientras todavía está terminando de orientarse, tal
+            // como haría un vehículo real con inercia de giro.
+            Quaternion rotacionObjetivo = visual.localRotation;
             if (direccionMovimiento.sqrMagnitude > 0.0001f)
-                visual.localRotation = Quaternion.LookRotation(direccionMovimiento.normalized, Vector3.up);
+                rotacionObjetivo = Quaternion.LookRotation(direccionMovimiento.normalized, Vector3.up);
 
             float tiempo = 0f;
             while (tiempo < duracionMovimiento)
             {
                 tiempo += Time.deltaTime;
                 float t = Mathf.Clamp01(tiempo / duracionMovimiento);
-                // Suavizado (ease-in-out) en vez de velocidad constante.
                 float tSuave = t * t * (3f - 2f * t);
                 visual.localPosition = Vector3.Lerp(origen, destinoLocal, tSuave);
+                visual.localRotation = Quaternion.RotateTowards(visual.localRotation, rotacionObjetivo,
+                    velocidadGiroTanque * Time.deltaTime);
                 AsentarSobreCelda(visual);
                 yield return null;
             }
 
             visual.localPosition = destinoLocal;
+
+            // Si el giro no llegó a completarse durante el desplazamiento (por
+            // ejemplo, un giro muy cerrado con velocidad de giro baja), se
+            // termina de orientar aparte para no dejarlo "torcido" al llegar.
+            float tiempoGiroExtra = 0f;
+            while (Quaternion.Angle(visual.localRotation, rotacionObjetivo) > 0.5f && tiempoGiroExtra < 2f)
+            {
+                tiempoGiroExtra += Time.deltaTime;
+                visual.localRotation = Quaternion.RotateTowards(visual.localRotation, rotacionObjetivo,
+                    velocidadGiroTanque * Time.deltaTime);
+                yield return null;
+            }
+
             AsentarSobreCelda(visual);
         }
 
-        // Calcula la altura del punto más bajo del modelo (usando los Renderer reales,
-        // sin importar dónde esté el pivote) y desplaza el objeto en Y hasta que esa
-        // base quede exactamente sobre la superficie de la celda.
         private void AsentarSobreCelda(Transform visual)
         {
             float baseMundoY = ObtenerAlturaInferior(visual);
@@ -882,31 +1779,23 @@ namespace TanksGame.Visual
             }
         }
 
-        // Punto más bajo (mundo) de todos los Renderer del objeto y sus hijos.
         private float ObtenerAlturaInferior(Transform objetivo)
         {
             var renderers = objetivo.GetComponentsInChildren<Renderer>();
             if (renderers.Length == 0) return objetivo.position.y;
 
             float minY = float.MaxValue;
-            foreach (var r in renderers)
-                minY = Mathf.Min(minY, r.bounds.min.y);
-
+            foreach (var r in renderers) minY = Mathf.Min(minY, r.bounds.min.y);
             return minY;
         }
 
-        // Punto más alto (mundo) de todos los Renderer del objeto y sus hijos.
-        // "alturaMinimaSiNoHayRenderer" se usa como respaldo (ej. si el prefab de celda
-        // no tiene ningún Renderer, algo inusual pero posible).
         private float ObtenerAlturaSuperior(Transform objetivo, float alturaMinimaSiNoHayRenderer)
         {
             var renderers = objetivo.GetComponentsInChildren<Renderer>();
             if (renderers.Length == 0) return alturaMinimaSiNoHayRenderer;
 
             float maxY = float.MinValue;
-            foreach (var r in renderers)
-                maxY = Mathf.Max(maxY, r.bounds.max.y);
-
+            foreach (var r in renderers) maxY = Mathf.Max(maxY, r.bounds.max.y);
             return maxY;
         }
 
@@ -915,18 +1804,414 @@ namespace TanksGame.Visual
             return new Vector3(x * tamanoCelda, 0f, y * tamanoCelda);
         }
 
+        // Convierte una celda de la grilla a un punto de MUNDO real, listo
+        // para usar en efectos que no cuelgan de "contenedorTanques" (como
+        // el proyectil o la explosión, que se sueltan sobre "transform" para
+        // no interferir con las corutinas de movimiento de los tanques).
+        //
+        // Antes esos efectos usaban CeldaAPosicionMundo(...) directamente
+        // como si ya fuera una posición de mundo, pero esa función solo da
+        // coordenadas LOCALES relativas a "contenedorTanques" (el mismo
+        // truco que usan los tanques, con localPosition). Si "contenedorTanques"
+        // no está exactamente en el origen del mundo, o el suelo real no
+        // está en Y=0 (el terreno tiene su propia altura, "superficieCeldaMundoY"),
+        // el resultado queda desplazado -- que es justo lo que se veía como
+        // "el misil sale una casilla abajo del tanque".
+        private Vector3 PuntoDeFuegoEnCelda(int x, int y, float alturaSobreCelda)
+        {
+            var local = CeldaAPosicionMundo(x, y);
+            var mundo = contenedorTanques.TransformPoint(new Vector3(local.x, 0f, local.z));
+            mundo.y = superficieCeldaMundoY + alturaSobreCelda;
+            return mundo;
+        }
+
+        // ---------------------------------------------------------------------
+        // MINAS: marcador visible en el tablero mientras la mina siga ahí
+        // (armada o recién colocada) y se quita solo cuando GridBoard ya no
+        // la reporta (porque detonó o porque, en el futuro, se retire por
+        // otro motivo).
+        // ---------------------------------------------------------------------
+        private readonly Dictionary<Vector2Int, GameObject> minasVisuales = new Dictionary<Vector2Int, GameObject>();
+
+        public void ActualizarMinas(IEnumerable<Vector2Int> celdasConMina)
+        {
+            var vigentes = new HashSet<Vector2Int>(celdasConMina);
+
+            foreach (var celda in vigentes)
+            {
+                if (minasVisuales.ContainsKey(celda)) continue;
+
+                var raiz = new GameObject("Mina").transform;
+                raiz.SetParent(contenedorTanques, true);
+                raiz.position = PuntoDeFuegoEnCelda(celda.x, celda.y, 0.03f);
+
+                CrearPieza(raiz, PrimitiveType.Cylinder, Vector3.zero,
+                    new Vector3(0.22f, 0.02f, 0.22f), new Color(0.12f, 0.12f, 0.1f));
+                CrearPieza(raiz, PrimitiveType.Sphere, Vector3.up * 0.03f,
+                    new Vector3(0.07f, 0.07f, 0.07f), new Color(0.8f, 0.1f, 0.05f));
+
+                minasVisuales[celda] = raiz.gameObject;
+                StartCoroutine(ParpadeoMina(raiz));
+            }
+
+            var aQuitar = new List<Vector2Int>();
+            foreach (var kv in minasVisuales)
+                if (!vigentes.Contains(kv.Key)) aQuitar.Add(kv.Key);
+
+            foreach (var celda in aQuitar)
+            {
+                if (minasVisuales[celda] != null) Destroy(minasVisuales[celda]);
+                minasVisuales.Remove(celda);
+            }
+        }
+
+        private System.Collections.IEnumerator ParpadeoMina(Transform raiz)
+        {
+            var luz = raiz.GetChild(1); // la esferita roja
+            while (raiz != null)
+            {
+                float t = (Mathf.Sin(Time.time * 4f) + 1f) * 0.5f;
+                luz.localScale = Vector3.one * Mathf.Lerp(0.05f, 0.09f, t);
+                yield return null;
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // DISPAROS: lanzamiento, trayectoria y explosión de AMT/MISIL. Se
+        // llama una vez por ronda con todos los disparos que ocurrieron en
+        // ella (GameManager pasa turnManager.LastRoundShots).
+        //
+        // Antes se lanzaba una corutina independiente POR disparo, así que si
+        // dos tanques disparaban en la misma ronda, sus misiles volaban a la
+        // vez -- se veía como si dispararan "en paralelo". La lógica del
+        // juego (TurnManager.ExecuteRound) ya procesa a los tanques uno por
+        // uno, en orden; ahora la reproducción visual respeta ese mismo
+        // orden: se espera a que termine el giro+disparo+explosión de un
+        // tanque antes de arrancar el siguiente.
+        // ---------------------------------------------------------------------
+        public void ReproducirDisparos(IEnumerable<ShotEvent> disparos)
+        {
+            StartCoroutine(ReproducirDisparosEnOrden(disparos));
+        }
+
+        private System.Collections.IEnumerator ReproducirDisparosEnOrden(IEnumerable<ShotEvent> disparos)
+        {
+            foreach (var disparo in disparos)
+                yield return ReproducirUnDisparo(disparo);
+        }
+
+        private System.Collections.IEnumerator ReproducirUnDisparo(ShotEvent disparo)
+        {
+            float alturaCanon = 0.55f * _escalaObjetos;
+            // Prioriza la posición REAL del tanque que dispara (si su visual
+            // ya existe): así el fogonazo sale exactamente del cañón que se
+            // ve en pantalla, incluso si ese tanque está a mitad de un
+            // desplazamiento animado en este mismo instante.
+            Vector3 origen = tanquesVisuales.TryGetValue(disparo.ShooterId, out var visualOrigen) && visualOrigen != null
+                ? visualOrigen.position + Vector3.up * alturaCanon
+                : PuntoDeFuegoEnCelda(disparo.Origin.x, disparo.Origin.y, alturaCanon);
+
+            Vector3 destino = PuntoDeFuegoEnCelda(disparo.ImpactCell.x, disparo.ImpactCell.y, alturaCanon);
+
+            // El tanque gira para encarar hacia donde va a disparar ANTES de
+            // que salga el fogonazo. Antes, disparar sin moverse dejaba al
+            // tanque mirando para donde quedó la última vez que se desplazó
+            // (la rotación solo se actualizaba en MoverTanqueSuave, que solo
+            // corre cuando cambia de casilla) aunque tank.Facing internamente
+            // ya apuntara hacia el disparo.
+            if (visualOrigen != null)
+                yield return GirarTanqueHaciaDisparo(visualOrigen, destino);
+
+            // Fogonazo de boca de cañón: una esfera que se infla y se apaga
+            // rápido, justo donde está el tanque que dispara.
+            yield return DestelloFogonazo(origen);
+
+            // Proyectil: una cápsula orientada hacia el destino, viajando en
+            // línea recta con un rastro (LineRenderer) detrás. El MISIL vuela
+            // más lento y grande (como un cohete); el AMT es un trazo rápido
+            // (como un cañonazo directo).
+            float duracionVuelo = disparo.EsMisil ? 0.45f : 0.18f;
+            float grosor = disparo.EsMisil ? 0.09f : 0.045f;
+            Color colorProyectil = disparo.EsMisil ? new Color(1f, 0.55f, 0.1f) : new Color(1f, 0.9f, 0.4f);
+
+            var proyectilGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            proyectilGo.transform.SetParent(transform, true);
+            proyectilGo.transform.localScale = new Vector3(grosor, grosor * 3f, grosor);
+            var colliderProyectil = proyectilGo.GetComponent<Collider>();
+            if (colliderProyectil != null) Destroy(colliderProyectil);
+            var rendererProyectil = proyectilGo.GetComponent<Renderer>();
+            if (rendererProyectil != null) rendererProyectil.material.color = colorProyectil;
+
+            var direccionVuelo = (destino - origen);
+            var rotacionVuelo = direccionVuelo.sqrMagnitude > 0.0001f
+                ? Quaternion.LookRotation(direccionVuelo.normalized, Vector3.up) * Quaternion.Euler(90f, 0f, 0f)
+                : Quaternion.identity;
+            proyectilGo.transform.rotation = rotacionVuelo;
+
+            var rastro = proyectilGo.AddComponent<TrailRenderer>();
+            rastro.time = disparo.EsMisil ? 0.35f : 0.15f;
+            rastro.startWidth = grosor * 1.4f;
+            rastro.endWidth = 0f;
+            rastro.material = new Material(ObtenerShaderEstandar());
+            rastro.startColor = colorProyectil;
+            rastro.endColor = new Color(colorProyectil.r, colorProyectil.g, colorProyectil.b, 0f);
+
+            float tiempo = 0f;
+            while (tiempo < duracionVuelo)
+            {
+                tiempo += Time.deltaTime;
+                float t = Mathf.Clamp01(tiempo / duracionVuelo);
+                proyectilGo.transform.position = Vector3.Lerp(origen, destino, t);
+                yield return null;
+            }
+
+            Destroy(proyectilGo, rastro.time);
+
+            yield return Explosion(destino, disparo.EsMisil ? 1.3f : 0.8f);
+        }
+
+        // Gira el tanque visual (con la misma velocidad angular que usa para
+        // moverse, "velocidadGiroTanque") hasta encarar el punto de impacto,
+        // ANTES de que salga el disparo. Si el tanque ya estaba mirando para
+        // ese lado, esto termina casi de inmediato.
+        private System.Collections.IEnumerator GirarTanqueHaciaDisparo(Transform visual, Vector3 puntoDeImpacto)
+        {
+            var direccion = puntoDeImpacto - visual.position;
+            direccion.y = 0f;
+            if (direccion.sqrMagnitude < 0.0001f) yield break;
+
+            var rotacionObjetivo = Quaternion.LookRotation(direccion.normalized, Vector3.up);
+
+            float tiempoLimite = 0f;
+            while (Quaternion.Angle(visual.rotation, rotacionObjetivo) > 0.5f && tiempoLimite < 2f)
+            {
+                tiempoLimite += Time.deltaTime;
+                visual.rotation = Quaternion.RotateTowards(visual.rotation, rotacionObjetivo,
+                    velocidadGiroTanque * Time.deltaTime);
+                yield return null;
+            }
+
+            visual.rotation = rotacionObjetivo;
+        }
+
+        private System.Collections.IEnumerator DestelloFogonazo(Vector3 posicion)
+        {
+            var flashGo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            flashGo.transform.SetParent(transform, true);
+            flashGo.transform.position = posicion;
+            var colliderFlash = flashGo.GetComponent<Collider>();
+            if (colliderFlash != null) Destroy(colliderFlash);
+            var rendererFlash = flashGo.GetComponent<Renderer>();
+            if (rendererFlash != null)
+            {
+                rendererFlash.material.color = new Color(1f, 0.85f, 0.4f);
+                AjustarBrillo(rendererFlash.material, 1.5f);
+            }
+
+            float duracion = 0.12f;
+            float tiempo = 0f;
+            while (tiempo < duracion)
+            {
+                tiempo += Time.deltaTime;
+                float t = tiempo / duracion;
+                flashGo.transform.localScale = Vector3.one * Mathf.Lerp(0.05f, 0.4f, t) * (1f - t * 0.3f);
+                yield return null;
+            }
+
+            Destroy(flashGo);
+        }
+
+        // Explosión: una bola de luz que se infla y se apaga rápido, más una
+        // ráfaga de partículas (humo/chispas) que se disuelve sola. Sin
+        // impacto en la lógica del juego: puramente decorativo.
+        private System.Collections.IEnumerator Explosion(Vector3 posicion, float escala)
+        {
+            var bolaGo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            bolaGo.transform.SetParent(transform, true);
+            bolaGo.transform.position = posicion;
+            var colliderBola = bolaGo.GetComponent<Collider>();
+            if (colliderBola != null) Destroy(colliderBola);
+            var rendererBola = bolaGo.GetComponent<Renderer>();
+            if (rendererBola != null)
+            {
+                rendererBola.material.color = new Color(1f, 0.5f, 0.05f);
+                AjustarBrillo(rendererBola.material, 2f);
+            }
+
+            var particulasGo = new GameObject("ExplosionParticulas");
+            particulasGo.transform.SetParent(transform, true);
+            particulasGo.transform.position = posicion;
+            var sistema = particulasGo.AddComponent<ParticleSystem>();
+
+            // AddComponent<ParticleSystem>() lo deja reproduciéndose desde
+            // ya (playOnAwake=true por defecto), así que cambiar 'duration'
+            // o 'loop' en 'main' un momento después -- con el sistema ya en
+            // marcha -- no está soportado y tiraba el warning en consola
+            // ("Setting the duration while system is still playing"). Se
+            // detiene primero, se configura todo, y recién al final se llama
+            // Play() una sola vez.
+            sistema.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+            var principal = sistema.main;
+            principal.startColor = new Color(0.25f, 0.22f, 0.2f, 0.9f);
+            principal.startSize = 0.3f * escala;
+            principal.startSpeed = 2.5f * escala;
+            principal.startLifetime = 0.6f;
+            principal.duration = 0.25f;
+            principal.loop = false;
+            var emision = sistema.emission;
+            emision.rateOverTime = 0f;
+            emision.SetBursts(new[] { new ParticleSystem.Burst(0f, (short)(14 * escala)) });
+            var forma = sistema.shape;
+            forma.shapeType = ParticleSystemShapeType.Sphere;
+            forma.radius = 0.1f;
+            var rendererParticulas = particulasGo.GetComponent<ParticleSystemRenderer>();
+            if (rendererParticulas != null) rendererParticulas.material = new Material(ObtenerShaderEstandar());
+            sistema.Play();
+
+            float duracion = 0.35f;
+            float tiempo = 0f;
+            while (tiempo < duracion)
+            {
+                tiempo += Time.deltaTime;
+                float t = tiempo / duracion;
+                bolaGo.transform.localScale = Vector3.one * escala * Mathf.Lerp(0.15f, 1.1f, Mathf.Sqrt(t));
+                if (rendererBola != null)
+                {
+                    var c = rendererBola.material.color;
+                    c.a = 1f - t;
+                    rendererBola.material.color = c;
+                }
+                yield return null;
+            }
+
+            Destroy(bolaGo);
+            Destroy(particulasGo, 1.5f);
+        }
+
         private void Limpiar()
         {
             foreach (var corutina in movimientosEnCurso.Values)
                 if (corutina != null) StopCoroutine(corutina);
             movimientosEnCurso.Clear();
 
+            if (rutinaAvion != null) StopCoroutine(rutinaAvion);
+            rutinaAvion = null;
+
             tanquesVisuales.Clear();
+            _ultimaVidaVisual.Clear();
+            posicionesCampamentos.Clear();
+            huellasMontanas.Clear();
+
             if (contenedorCeldas != null) Destroy(contenedorCeldas.gameObject);
             if (contenedorTanques != null) Destroy(contenedorTanques.gameObject);
             if (contenedorMontanas != null) Destroy(contenedorMontanas.gameObject);
             if (contenedorCampamentos != null) Destroy(contenedorCampamentos.gameObject);
             if (contenedorTerreno != null) Destroy(contenedorTerreno.gameObject);
+            if (contenedorAvion != null) Destroy(contenedorAvion.gameObject);
+        }
+
+        // ---------------------------------------------------------------------
+        // AVIÓN DECORATIVO
+        //
+        // Cruza el cielo por encima de la sierra siguiendo la diagonal que va
+        // desde el flanco cercano a la cámara hacia el flanco opuesto y más
+        // alto -- la misma trayectoria que se marcó a mano sobre la captura de
+        // pantalla. Es puramente decorativo: sin collider y sin efecto en la
+        // lógica del juego.
+        // ---------------------------------------------------------------------
+        private void ConstruirAvion()
+        {
+            contenedorAvion = new GameObject("Avion").transform;
+            contenedorAvion.SetParent(transform, false);
+            contenedorAvion.gameObject.SetActive(false); // se activa solo durante el vuelo
+
+            GameObject avionGo;
+            if (prefabAvion != null)
+            {
+                // Con un prefab propio (por ejemplo un helicóptero) no hace
+                // falta construir piezas: se instancia tal cual y se aplica la
+                // escala y el ajuste de rotación que el usuario configure en el
+                // Inspector, por si el modelo no mira hacia +Z de origen.
+                avionGo = Instantiate(prefabAvion);
+                avionGo.transform.localScale = Vector3.one * escalaPrefabAvion * _escalaObjetos;
+            }
+            else
+            {
+                avionGo = new GameObject("AvionPlaceholder");
+                var avionPieza = avionGo.transform;
+                avionPieza.localScale = Vector3.one * _escalaObjetos * 1.4f;
+
+                Color pintura = new Color(0.55f, 0.58f, 0.6f);
+                Color cabina = new Color(0.15f, 0.18f, 0.2f);
+
+                // El fuselaje va a lo largo del eje LOCAL +Z (morro hacia
+                // adelante) y las alas a lo largo de X: VueloAvion() orienta el
+                // objeto con Quaternion.LookRotation(dirección), que alinea el
+                // eje +Z con la dirección de vuelo.
+                CrearPieza(avionPieza, PrimitiveType.Capsule, Vector3.zero, new Vector3(0.18f, 1.1f, 0.18f),
+                    pintura, Quaternion.Euler(90f, 0f, 0f));
+                CrearPieza(avionPieza, PrimitiveType.Sphere, new Vector3(0f, 0.08f, 0.7f),
+                    new Vector3(0.22f, 0.22f, 0.22f), cabina);
+                CrearPieza(avionPieza, PrimitiveType.Cube, Vector3.zero, new Vector3(2.6f, 0.04f, 0.25f), pintura);
+                CrearPieza(avionPieza, PrimitiveType.Cube, new Vector3(0f, 0.25f, -1.0f),
+                    new Vector3(0.06f, 0.5f, 0.12f), pintura);
+                CrearPieza(avionPieza, PrimitiveType.Cube, new Vector3(0f, 0.05f, -1.0f),
+                    new Vector3(0.9f, 0.04f, 0.1f), pintura);
+            }
+
+            avionGo.name = "AvionDecorativo";
+            avionGo.transform.SetParent(contenedorAvion, false);
+        }
+
+        private System.Collections.IEnumerator RutinaAvion()
+        {
+            var rng = new System.Random(System.Guid.NewGuid().GetHashCode());
+            while (true)
+            {
+                float espera = intervaloAvion * (0.7f + (float)rng.NextDouble() * 0.7f);
+                yield return new WaitForSeconds(espera);
+                yield return VueloAvion(rng.NextDouble() < 0.5);
+            }
+        }
+
+        private System.Collections.IEnumerator VueloAvion(bool deIdaYVuelta)
+        {
+            if (contenedorAvion == null || contenedorAvion.childCount == 0) yield break;
+            var avion = contenedorAvion.GetChild(0);
+
+            var haciaCamara = DireccionHaciaCamara();
+            var lateral = Vector3.Cross(Vector3.up, haciaCamara).normalized;
+
+            float alcance = (_mitadAncho + _mitadAlto) * 0.5f + 45f * _escalaObjetos;
+            float alturaBaja = _alturaMontanaAprox * 0.95f;
+            float alturaAlta = _alturaMontanaAprox * 1.7f;
+
+            // Diagonal: de un flanco bajo y cercano al opuesto alto y lejano,
+            // igual que la línea marcada en la captura.
+            var puntoA = _centroTablero - lateral * alcance * 0.95f - haciaCamara * alcance * 0.25f
+                         + Vector3.up * alturaBaja;
+            var puntoB = _centroTablero + lateral * alcance * 0.95f + haciaCamara * alcance * 0.55f
+                         + Vector3.up * alturaAlta;
+
+            var origen = deIdaYVuelta ? puntoA : puntoB;
+            var destino = deIdaYVuelta ? puntoB : puntoA;
+
+            avion.position = origen;
+            avion.rotation = Quaternion.LookRotation((destino - origen).normalized, Vector3.up)
+                             * Quaternion.Euler(rotacionExtraAvion);
+            contenedorAvion.gameObject.SetActive(true);
+
+            float tiempo = 0f;
+            while (tiempo < duracionVueloAvion)
+            {
+                tiempo += Time.deltaTime;
+                float t = Mathf.Clamp01(tiempo / duracionVueloAvion);
+                avion.position = Vector3.Lerp(origen, destino, t);
+                yield return null;
+            }
+
+            contenedorAvion.gameObject.SetActive(false);
         }
     }
 }

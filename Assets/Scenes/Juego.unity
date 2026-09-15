@@ -420,6 +420,12 @@ MonoBehaviour:
   configuracionTanques:
   - nombre: Jugador 1
     misilesIniciales: 5
+    skin:
+      Patron: 0
+      Color: 0
+      Calcomania: 0
+      Numero: 0
+      Bandera: 0
     programa: 'IF RADAR(E) > 0
 
       MISIL
@@ -431,6 +437,12 @@ MonoBehaviour:
       ESPERAR'
   - nombre: Jugador 2
     misilesIniciales: 5
+    skin:
+      Patron: 0
+      Color: 0
+      Calcomania: 0
+      Numero: 0
+      Bandera: 0
     programa: 'IF VIDA < 40
 
       REPARAR
@@ -558,6 +570,30 @@ MonoBehaviour:
   separacion: 0.05
   colorJugador1: {r: 0.2, g: 0.4, b: 0.9, a: 1}
   colorJugador2: {r: 0.9, g: 0.25, b: 0.2, a: 1}
+  duracionMovimiento: 0.35
+  generarPaisaje: 1
+  escalaPaisaje: 1
+  sierraPegadaAlTablero: 0.9
+  alturaSierra: 1
+  densidadBosque: 1
+  aperturaFrontal: 0.42
+  distanciaEdificios: 1.9
+  nieblaLejana: 1
+  prefabsEdificios:
+  - {fileID: 5203945671666590674, guid: 40b4991ea9ee5de4aad4824fa0966dfd, type: 3}
+  - {fileID: 7517687138782213844, guid: 1f3b8ed346d9f334aa7516a8dcc012f7, type: 3}
+  - {fileID: 126775235319729118, guid: 0f8278a08fdd4b54fb7d027563f1b95a, type: 3}
+  - {fileID: 1757073144890816982, guid: 0b1830e17e2032847911da5328b4cf6c, type: 3}
+  edificiosPorPuesto: 1
+  escalaPrefabsEdificios: 0.2
+  escalaExtraTorres: 0.6
+  avionDecorativo: 1
+  prefabAvion: {fileID: 919132149155446097, guid: 91fc0800d3cd5224a95d99198519c310, type: 3}
+  escalaPrefabAvion: 0.3
+  rotacionExtraAvion: {x: 0, y: 0, z: 0}
+  intervaloAvion: 22
+  duracionVueloAvion: 13
+  biomaActual: 0
 --- !u!4 &1461863335
 Transform:
   m_ObjectHideFlags: 0
@@ -606,6 +642,7 @@ MonoBehaviour:
   tamanoPanelTanque: {x: 300, y: 170}
   espacioEntrePaneles: 20
   margenBorde: 20
+  segundosPorTurno: 1.5
 --- !u!4 &2012781288
 Transform:
   m_ObjectHideFlags: 0

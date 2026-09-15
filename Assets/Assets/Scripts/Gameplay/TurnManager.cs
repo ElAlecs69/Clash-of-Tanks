@@ -2,10 +2,24 @@ using System.Collections.Generic;
 using System.Linq;
 using TanksGame.Core;
 using TanksGame.Language;
+using UnityEngine;
 
 namespace TanksGame.Gameplay
 {
     public enum GameResult { Ongoing, Draw, PlayerWins }
+
+    // Un disparo (AMT o MISIL) ocurrido durante la ronda que se acaba de
+    // ejecutar, con los datos que la vista necesita para animarlo: de dónde
+    // sale, hasta dónde llega (la celda del tanque golpeado, o la última
+    // celda libre/borde si no impactó a nadie) y si impactó de verdad.
+    public class ShotEvent
+    {
+        public int ShooterId;
+        public Vector2Int Origin;
+        public Vector2Int ImpactCell;
+        public bool EsMisil;   // true = MISIL, false = AMT
+        public bool Impacto;   // true = golpeó a un tanque
+    }
 
     // Orquesta una ronda de juego siguiendo el orden general de ejecución
     // descrito en la sección 22 del documento:
@@ -16,6 +30,7 @@ namespace TanksGame.Gameplay
         public GridBoard Board;
         public List<TankAgent> Agents;
         public List<string> LastRoundLog = new List<string>();
+        public List<ShotEvent> LastRoundShots = new List<ShotEvent>();
         public int RondasAntesDeDesgaste = 2;
         public float DanioPorDesgaste = 2f;
 
@@ -27,6 +42,15 @@ namespace TanksGame.Gameplay
         // algo, nunca al que decide esperar.
         private readonly Dictionary<TankAgent, int> rondasAtascadoPorAgente = new Dictionary<TankAgent, int>();
 
+        // Posición de cada tanque AL EMPEZAR la ronda actual, antes de
+        // ejecutar ninguna instrucción. CheckMines la usa para saber si el
+        // tanque se movió o no durante la ronda: una mina armada solo hace
+        // daño si el tanque termina la ronda en la MISMA casilla en la que la
+        // empezó (antes se comparaba solo la posición final contra la mina,
+        // así que un tanque que se movía y terminaba pisando una mina
+        // recibía daño igual; ahora moverse basta para esquivarla).
+        private readonly Dictionary<TankAgent, Vector2Int> posicionInicioRonda = new Dictionary<TankAgent, Vector2Int>();
+
         public TurnManager(GridBoard board, List<TankAgent> agents)
         {
             Board = board;
@@ -36,11 +60,23 @@ namespace TanksGame.Gameplay
         public GameResult ExecuteRound()
         {
             LastRoundLog.Clear();
+            LastRoundShots.Clear();
             bool huboDanio = false;
 
             // El escudo protege solo durante el turno en que se activa (sección 13).
             foreach (var agent in Agents)
                 agent.Tank.ShieldActive = false;
+
+            // Se captura ANTES de ejecutar nada y se arman las minas que
+            // vienen de rondas anteriores. Las minas colocadas en ESTA ronda
+            // (por la instrucción Mina, más abajo) quedan desarmadas y no
+            // podrán hacer daño hasta la ronda siguiente.
+            posicionInicioRonda.Clear();
+            foreach (var agent in Agents)
+                if (agent.Tank.IsAlive)
+                    posicionInicioRonda[agent] = agent.Tank.Position;
+
+            Board.ArmarMinasPendientes();
 
             foreach (var agent in Agents)
             {
@@ -108,7 +144,15 @@ namespace TanksGame.Gameplay
                 {
                     var dir = instruction.Dir ?? tank.Facing;
                     tank.Facing = dir;
-                    var (hit, _, _) = CombatResolver.Trace(Board, AliveTanks(), tank.Position, dir);
+                    var (hit, distanciaAmt, bloqueadoAmt) = CombatResolver.Trace(Board, AliveTanks(), tank.Position, dir);
+                    LastRoundShots.Add(new ShotEvent
+                    {
+                        ShooterId = tank.PlayerId,
+                        Origin = tank.Position,
+                        ImpactCell = tank.Position + dir.ToOffset() * CeldaVisibleDelTrazo(distanciaAmt, hit != null, bloqueadoAmt),
+                        EsMisil = false,
+                        Impacto = hit != null
+                    });
 
                     if (hit != null)
                     {
@@ -139,7 +183,24 @@ namespace TanksGame.Gameplay
                     }
 
                     tank.Missiles--;
-                    var (hit, _, _) = CombatResolver.Trace(Board, AliveTanks(), tank.Position, tank.Facing);
+                    // El MISIL admite una dirección propia (MISIL(N), etc.,
+                    // ya la reconocía el parser) que antes se ignoraba por
+                    // completo aquí: siempre disparaba hacia tank.Facing sin
+                    // actualizarlo, así que un MISIL(N) con el tanque mirando
+                    // al Este disparaba igual hacia el Este. Ahora, igual que
+                    // AMT, usa esa dirección si viene, y de paso orienta al
+                    // tanque hacia ella.
+                    var dirMisil = instruction.Dir ?? tank.Facing;
+                    tank.Facing = dirMisil;
+                    var (hit, distanciaMisil, bloqueadoMisil) = CombatResolver.Trace(Board, AliveTanks(), tank.Position, dirMisil);
+                    LastRoundShots.Add(new ShotEvent
+                    {
+                        ShooterId = tank.PlayerId,
+                        Origin = tank.Position,
+                        ImpactCell = tank.Position + dirMisil.ToOffset() * CeldaVisibleDelTrazo(distanciaMisil, hit != null, bloqueadoMisil),
+                        EsMisil = true,
+                        Impacto = hit != null
+                    });
 
                     if (hit != null)
                     {
@@ -188,6 +249,22 @@ namespace TanksGame.Gameplay
             }
         }
 
+        // CombatResolver.Trace() cuenta la distancia incluyendo el paso que
+        // lo hace fallar: si el trazo se sale del tablero, "distance" ya
+        // corresponde a la casilla INVÁLIDA de fuera del tablero (por eso la
+        // explosión se veía disparada una casilla de más, fuera del borde
+        // verde, en el bosque). Si impactó un tanque o chocó contra un
+        // obstáculo, "distance" sí es una casilla válida dentro del tablero
+        // y hay que usarla tal cual. Solo cuando no impactó nada y no fue un
+        // obstáculo (se salió del tablero) hay que quedarse una casilla
+        // antes (distance - 1) para que la explosión se vea en el borde real
+        // del tablero en vez de flotando fuera de él.
+        private static int CeldaVisibleDelTrazo(int distancia, bool impacto, bool bloqueadoPorObstaculo)
+        {
+            if (impacto || bloqueadoPorObstaculo) return distancia;
+            return Mathf.Max(distancia - 1, 0);
+        }
+
         private int Radar(Tank tank, Direction dir)
         {
             var (hit, dist, _) = CombatResolver.Trace(Board, AliveTanks(), tank.Position, dir);
@@ -200,6 +277,13 @@ namespace TanksGame.Gameplay
             {
                 var tank = agent.Tank;
                 if (!tank.IsAlive) continue;
+
+                // Solo detona si el tanque terminó la ronda EN LA MISMA
+                // casilla en la que la empezó (no se movió). Un tanque que se
+                // desplaza esta ronda -- se aleje de una mina o pise una
+                // nueva -- nunca recibe daño de mina en esa misma ronda.
+                if (!posicionInicioRonda.TryGetValue(agent, out var posicionInicial)) continue;
+                if (tank.Position != posicionInicial) continue;
 
                 if (Board.TryConsumeMine(tank.Position))
                 {
