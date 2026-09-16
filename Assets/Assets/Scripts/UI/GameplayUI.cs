@@ -58,6 +58,16 @@ namespace TanksGame.UI
         {
             if (partidaTerminada || gameManager == null) return;
 
+            // Si la ronda anterior todavía se está animando (movimientos y
+            // disparos en orden), no se avanza el temporizador. Antes esto no
+            // se comprobaba: con velocidades altas o animaciones largas, el
+            // siguiente turno podía arrancar mientras BoardView todavía
+            // estaba reproduciendo la ronda anterior, y eso terminaba
+            // rompiendo la animación en curso (ver comentario en
+            // GameManager.EjecutarSiguienteTurno sobre "Collection was
+            // modified").
+            if (gameManager.vistaTablero != null && gameManager.vistaTablero.RondaEnAnimacion) return;
+
             temporizadorTurno += Time.deltaTime * multiplicadorVelocidad;
             if (temporizadorTurno >= segundosPorTurno)
             {

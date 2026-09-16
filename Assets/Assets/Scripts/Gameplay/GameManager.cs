@@ -168,17 +168,87 @@ namespace TanksGame.Gameplay
 
         public GameResult EjecutarSiguienteTurno()
         {
+            // Posición de cada tanque ANTES de ejecutar la ronda, para saber
+            // después cuáles se movieron y animar solo esos.
+            var posicionesAntes = agents.ToDictionary(a => a.Tank.PlayerId, a => a.Tank.Position);
+            // Vida ANTES de la ronda: a los tanques que reciban un disparo
+            // esta ronda se les sigue mostrando esta vida (sin daño) hasta
+            // que su explosión se reproduzca en pantalla; ver más abajo.
+            var vidaAntes = agents.ToDictionary(a => a.Tank.PlayerId, a => Mathf.RoundToInt(a.Tank.Health));
+
             var result = turnManager.ExecuteRound();
 
             foreach (var line in turnManager.LastRoundLog)
                 Debug.Log(line);
 
-            RefrescarVista();
+            // IDs de los tanques que fueron golpeados por un disparo, mina,
+            // choque o desgaste esta ronda: su apariencia dañada (chapa
+            // quemada/humo/volcado) no se debe aplicar todavía -- BoardView
+            // la aplicará en el momento exacto en que se reproduzca la
+            // animación de ESE evento en particular (impacto de disparo,
+            // detonación de mina, choque o sacudida por desgaste).
+            var golpeadosPorDisparo = new HashSet<int>(
+                turnManager.LastRoundShots.Where(s => s.Impacto).Select(s => s.TargetId));
+            var golpeadosPorOtrosEventos = new HashSet<int>(
+                turnManager.LastRoundDamageEvents.SelectMany(e => e.TargetIds));
+            var todosLosGolpeados = new HashSet<int>(golpeadosPorDisparo.Concat(golpeadosPorOtrosEventos));
+
+            // Vida, aparición y muerte se actualizan ya mismo para todos los
+            // tanques EXCEPTO los golpeados esta ronda (esos muestran su
+            // vida/estado de ANTES hasta que se reproduzca su evento).
+            // Tampoco se anima movimiento aquí (animarMovimiento: false): el
+            // movimiento, los disparos y los demás eventos los reproduce,
+            // en orden, ReproducirRondaSecuencial más abajo.
+            var datosVisuales = agents.Select(a =>
+                (playerId: a.Tank.PlayerId,
+                 posicion: a.Tank.Position,
+                 vivo: todosLosGolpeados.Contains(a.Tank.PlayerId) ? true : a.Tank.IsAlive,
+                 vidaPorcentaje: todosLosGolpeados.Contains(a.Tank.PlayerId)
+                     ? vidaAntes[a.Tank.PlayerId]
+                     : Mathf.RoundToInt(a.Tank.Health),
+                 skin: a.Skin));
 
             if (vistaTablero != null)
             {
+                vistaTablero.ActualizarTanques(datosVisuales, animarMovimiento: false);
                 vistaTablero.ActualizarMinas(board.MinePositions());
-                vistaTablero.ReproducirDisparos(turnManager.LastRoundShots);
+
+                // Se copia cada disparo a un diccionario propio de esta
+                // llamada: turnManager.LastRoundShots es la MISMA lista que
+                // TurnManager vacía al empezar la próxima ronda. Si se la
+                // pasáramos tal cual a una corrutina de animación, un turno
+                // automático que arranca antes de que esa corrutina termine
+                // la vacía a mitad de camino y la corrutina explota con
+                // "Collection was modified", perdiendo el disparo pendiente
+                // (por eso el jugador 3 se quedaba sin animar su MISIL).
+                var disparosPorJugador = turnManager.LastRoundShots
+                    .GroupBy(s => s.ShooterId)
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                var pasos = agents.Select(a => new BoardView.PasoRonda
+                {
+                    PlayerId = a.Tank.PlayerId,
+                    SeMovio = posicionesAntes.TryGetValue(a.Tank.PlayerId, out var antes)
+                              && antes != a.Tank.Position,
+                    Destino = a.Tank.Position,
+                    Disparo = disparosPorJugador.TryGetValue(a.Tank.PlayerId, out var disparo) ? disparo : null
+                }).ToList();
+
+                // Igual que con los disparos: se copian los eventos a listas
+                // propias de esta llamada, porque LastRoundDamageEvents es
+                // la MISMA lista que TurnManager reutiliza y vacía en la
+                // próxima ronda.
+                var eventos = turnManager.LastRoundDamageEvents
+                    .Select(e => new BoardView.EventoDanoVisual
+                    {
+                        Tipo = e.Tipo,
+                        Celda = e.Celda,
+                        TargetIds = new List<int>(e.TargetIds),
+                        VidaPorcentajeDespuesPorId = new Dictionary<int, int>(e.VidaPorcentajeDespuesPorId),
+                        DestruidosIds = new HashSet<int>(e.DestruidosIds)
+                    }).ToList();
+
+                vistaTablero.ReproducirRondaSecuencial(pasos, eventos);
             }
 
             if (result == GameResult.PlayerWins)
@@ -194,7 +264,7 @@ namespace TanksGame.Gameplay
             return result;
         }
 
-        private void RefrescarVista()
+        private void RefrescarVista(bool animarMovimiento = true)
         {
             if (vistaTablero == null) return;
 
@@ -207,7 +277,7 @@ namespace TanksGame.Gameplay
                 (playerId: a.Tank.PlayerId, posicion: a.Tank.Position, vivo: a.Tank.IsAlive,
                  vidaPorcentaje: Mathf.RoundToInt(a.Tank.Health), skin: a.Skin));
 
-            vistaTablero.ActualizarTanques(datos);
+            vistaTablero.ActualizarTanques(datos, animarMovimiento);
         }
         // El multiplicador fijo (x1.6) que había antes no tenía en cuenta el
         // campo de visión real de la cámara ni el aspecto de pantalla, así que

@@ -5,8 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
-using UnityEngine.InputSystem;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -148,6 +148,10 @@ namespace TanksGame.UI
         private Button botonEliminarScriptRef;
         private Text textoBotonEliminarScript;
         private Text textoBotonGuardarTanque;
+        private Button botonCancelarEdicionRef;
+        private Text textoBotonCancelarEdicion;
+        private string textoEditorAntesDeEditarHistorial = "";
+        private string nombreArchivoAntesDeEditarHistorial = "";
         private bool modoEliminarActivo;
 
         // Un script por tanque ya programado y validado, en el orden en que se programaron.
@@ -168,10 +172,19 @@ namespace TanksGame.UI
         private int ultimaPosicionCursorConocida;
         private bool sincronizandoCursorProgramaticamente;
 
+        // Estado anterior del editor. Se usa para interceptar Backspace sin
+        // intervenir en OnUpdateSelected(), dejando que InputField gestione
+        // normalmente flechas, Enter, Home/End, selección, etc.
+        private string textoAnteriorEditor = string.Empty;
+        private int caretAnteriorEditor;
+        private int anclaAnteriorEditor;
+        private int focoAnteriorEditor;
+        private bool procesandoCambioBackspace;
+
         private static readonly string[] PalabrasClave =
         {
             "INICIO", "IF", "FIN", "MOV", "AMT", "MINA", "MISIL", "RADAR",
-            "ESCUDO", "ESPERAR", "DAÑAR", "DAÑO", "BUCLE"
+            "ESCUDO", "ESPERAR", /*"DAÑAR", "DAÑO",*/ "BUCLE"
         };
 
         private static readonly Color[] ColoresPrincipales =
@@ -268,16 +281,29 @@ namespace TanksGame.UI
         }
 
         private void Update()
-{
-    if (!sincronizandoCursorProgramaticamente && campoEditor != null && campoEditor.isFocused)
-    {
-        ultimaPosicionCursorConocida = campoEditor.caretPosition;
-        AsegurarCursorVisible();
-    }
+        {
+            if (!sincronizandoCursorProgramaticamente && campoEditor != null && campoEditor.isFocused)
+            {
+                int caretActual = campoEditor.caretPosition;
 
-    if (rotarTanquePreview && tanquePreviewInstancia != null)
-        tanquePreviewInstancia.Rotate(Vector3.up, velocidadRotacionPreview * Time.deltaTime, Space.World);
-}
+                // El EventSystem procesa las teclas después de Update(). Por eso aquí
+                // vemos el resultado de las flechas del frame anterior y actualizamos
+                // el ScrollRect solo cuando el caret realmente cambió.
+                if (caretActual != ultimaPosicionCursorConocida)
+                {
+                    ultimaPosicionCursorConocida = caretActual;
+                    AsegurarCursorVisible();
+                }
+
+                // Guardamos el estado anterior para el Backspace personalizado.
+                caretAnteriorEditor = caretActual;
+                anclaAnteriorEditor = campoEditor.selectionAnchorPosition;
+                focoAnteriorEditor = campoEditor.selectionFocusPosition;
+            }
+
+            if (rotarTanquePreview && tanquePreviewInstancia != null)
+                tanquePreviewInstancia.Rotate(Vector3.up, velocidadRotacionPreview * Time.deltaTime, Space.World);
+        }
 
         private void ConstruirUI()
         {
@@ -572,8 +598,8 @@ namespace TanksGame.UI
                 ("IF ( ) { }", "IF ( ) {\n    \n}"),
                 ("ESCUDO", "ESCUDO"),
                 ("ESPERAR", "ESPERAR"),
-                ("DAÑAR", "DAÑAR"),
-                ("DAÑO", "DAÑO"),
+                //("DAÑAR", "DAÑAR"),
+                //("DAÑO", "DAÑO"),
                 ("BUCLE", "BUCLE\n    \nFIN"),
             };
 
@@ -673,6 +699,7 @@ private void FijarCursorEnEditor(int posicion)
         campoEditor.selectionAnchorPosition = posicionClamp;
         campoEditor.selectionFocusPosition = posicionClamp;
         campoEditor.caretPosition = posicionClamp;
+        campoEditor.ForceLabelUpdate();
         ultimaPosicionCursorConocida = posicionClamp;
         AsegurarCursorVisible();
         return;
@@ -685,44 +712,41 @@ private void FijarCursorEnEditor(int posicion)
 // Hace scroll dentro de la terminal lo mínimo necesario para que la línea del cursor
 // quede visible — un InputField normal no hace esto solo dentro de un ScrollRect.
 private void AsegurarCursorVisible()
-{
-    if (scrollTerminal == null || campoEditor == null || contenedorEditorRect == null) return;
+        {
+            if (scrollTerminal == null || campoEditor == null || contenedorEditorRect == null) return;
 
-    string texto = campoEditor.text;
-    int caret = Mathf.Clamp(ultimaPosicionCursorConocida, 0, texto.Length);
+            string texto = campoEditor.text ?? string.Empty;
+            int caret = Mathf.Clamp(campoEditor.caretPosition, 0, texto.Length);
 
-    int totalLineas = 1, lineaCaret = 0;
-    for (int i = 0; i < texto.Length; i++)
-    {
-        if (texto[i] != '\n') continue;
-        totalLineas++;
-        if (i < caret) lineaCaret++;
-    }
+            int lineaCaret = 0;
+            for (int i = 0; i < caret; i++)
+            {
+                if (texto[i] == '\n')
+                    lineaCaret++;
+            }
 
-    float alturaContenido = contenedorEditorRect.rect.height;
-    float alturaViewport = scrollTerminal.viewport.rect.height;
-    float maxScrollPx = Mathf.Max(0f, alturaContenido - alturaViewport);
-    if (maxScrollPx <= 0f || totalLineas <= 0) return;
+            float alturaViewport = scrollTerminal.viewport != null
+                ? scrollTerminal.viewport.rect.height
+                : 0f;
+            float alturaContenido = contenedorEditorRect.rect.height;
+            float maxScrollPx = Mathf.Max(0f, alturaContenido - alturaViewport);
+            if (maxScrollPx <= 0f) return;
 
-    float alturaLinea = alturaContenido / totalLineas;
-    float topLinea = lineaCaret * alturaLinea;
-    float bottomLinea = topLinea + alturaLinea;
+            float topLinea = lineaCaret * ALTURA_LINEA_EDITOR;
+            float bottomLinea = topLinea + ALTURA_LINEA_EDITOR;
+            float scrollActualPx = (1f - scrollTerminal.verticalNormalizedPosition) * maxScrollPx;
 
-    // Convención REAL de Unity: verticalNormalizedPosition 1 = arriba del contenido,
-    // 0 = abajo. "scrollActualPx" es cuántos píxeles bajamos desde el tope.
-    float scrollActualPx = (1f - scrollTerminal.verticalNormalizedPosition) * maxScrollPx;
+            float nuevoScrollPx = scrollActualPx;
+            if (topLinea < scrollActualPx)
+                nuevoScrollPx = topLinea;
+            else if (bottomLinea > scrollActualPx + alturaViewport)
+                nuevoScrollPx = bottomLinea - alturaViewport;
 
-    float nuevoScrollPx = scrollActualPx;
-    if (topLinea < scrollActualPx)
-        nuevoScrollPx = topLinea;
-    else if (bottomLinea > scrollActualPx + alturaViewport)
-        nuevoScrollPx = bottomLinea - alturaViewport;
+            nuevoScrollPx = Mathf.Clamp(nuevoScrollPx, 0f, maxScrollPx);
+            scrollTerminal.verticalNormalizedPosition = 1f - (nuevoScrollPx / maxScrollPx);
+        }
 
-    nuevoScrollPx = Mathf.Clamp(nuevoScrollPx, 0f, maxScrollPx);
-    scrollTerminal.verticalNormalizedPosition = 1f - (nuevoScrollPx / maxScrollPx);
-}
-
-private IEnumerator EnfocarEditorYFijarCursor(int posicion)
+        private IEnumerator EnfocarEditorYFijarCursor(int posicion)
 {
     sincronizandoCursorProgramaticamente = true;
     try
@@ -741,6 +765,7 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
         campoEditor.selectionAnchorPosition = posicionClamp;
         campoEditor.selectionFocusPosition = posicionClamp;
         campoEditor.caretPosition = posicionClamp;
+        campoEditor.ForceLabelUpdate();
 
         ultimaPosicionCursorConocida = posicionClamp;
     }
@@ -799,7 +824,7 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
 
             var botonGuardarTanque = CrearRectElastico(panel.transform, "BotonGuardarScriptTanque",
                 new Vector2(0, 0), new Vector2(1, 0),
-                new Vector2(15, 46), new Vector2(-175, 85),
+                new Vector2(15, 46), new Vector2(-95, 85),
                 colorBoton, null);
             var btnGuardarTanque = botonGuardarTanque.AddComponent<Button>();
             btnGuardarTanque.targetGraphic = botonGuardarTanque.GetComponent<Image>();
@@ -816,21 +841,118 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             textoRect.offsetMin = Vector2.zero;
             textoRect.offsetMax = Vector2.zero;
 
+            var botonCancelarEdicion = CrearRectElastico(panel.transform, "BotonCancelarEdicion",
+                new Vector2(1, 0), new Vector2(1, 0),
+                new Vector2(-175, 46), new Vector2(-95, 85),
+                colorBotonAccentoRojo, null);
+            botonCancelarEdicionRef = botonCancelarEdicion.AddComponent<Button>();
+            botonCancelarEdicionRef.targetGraphic = botonCancelarEdicion.GetComponent<Image>();
+            botonCancelarEdicionRef.onClick.AddListener(OnCancelarEdicion);
+            textoBotonCancelarEdicion = CrearTexto(
+                botonCancelarEdicion.transform, "Texto", "CANCELAR",
+                Vector2.zero, Vector2.zero, 14, FontStyle.Bold,
+                TextAnchor.MiddleCenter, colorTexto);
+            botonCancelarEdicionRef.gameObject.SetActive(false);
+
+            var textoCancelarRect = textoBotonCancelarEdicion.rectTransform;
+            textoCancelarRect.anchorMin = Vector2.zero;
+            textoCancelarRect.anchorMax = Vector2.one;
+            textoCancelarRect.offsetMin = Vector2.zero;
+            textoCancelarRect.offsetMax = Vector2.zero;
+
             ConstruirPanelRosaVientos(panel.transform);
 
-            campoEditor.onValueChanged.AddListener(_ =>
-            {
-                ActualizarDeteccionDireccion();
-                ActualizarNumerosDeLinea();
-                ActualizarResaltadoSintaxis();
-            });
+            campoEditor.onValueChanged.AddListener(AlCambiarTextoEditor);
+
+            textoAnteriorEditor = campoEditor.text;
+            caretAnteriorEditor = campoEditor.caretPosition;
+            anclaAnteriorEditor = campoEditor.selectionAnchorPosition;
+            focoAnteriorEditor = campoEditor.selectionFocusPosition;
 
             ActualizarEditorTrasCambio();
+        }
+
+        private void AlCambiarTextoEditor(string nuevoTexto)
+        {
+            // InputField ya procesó el Backspace. Solo después de ese procesamiento
+            // reemplazamos el borrado de UN carácter por el borrado de la instrucción
+            // completa. No tocamos OnUpdateSelected(), que es quien mantiene la
+            // navegación vertical/horizontal del InputField.
+            bool backspacePresionado = Keyboard.current != null &&
+                                       Keyboard.current.backspaceKey.isPressed;
+
+            bool debeBorrarInstruccion = !procesandoCambioBackspace &&
+                                         backspacePresionado &&
+                                         campoEditor != null &&
+                                         campoEditor.isFocused &&
+                                         anclaAnteriorEditor == focoAnteriorEditor &&
+                                         !string.IsNullOrEmpty(textoAnteriorEditor) &&
+                                         nuevoTexto.Length == textoAnteriorEditor.Length - 1;
+
+            if (debeBorrarInstruccion)
+            {
+                int caret = Mathf.Clamp(caretAnteriorEditor, 0, textoAnteriorEditor.Length);
+
+                if (caret > 0)
+                {
+                    int inicioLinea = textoAnteriorEditor.LastIndexOf('\n', Mathf.Max(0, caret - 1)) + 1;
+                    int inicioABorrar;
+
+                    if (caret == inicioLinea)
+                    {
+                        inicioABorrar = inicioLinea - 1;
+                    }
+                    else
+                    {
+                        string antesEnLinea = textoAnteriorEditor.Substring(inicioLinea, caret - inicioLinea);
+                        inicioABorrar = inicioLinea + EncontrarInicioTokenABorrar(antesEnLinea);
+                    }
+
+                    inicioABorrar = Mathf.Clamp(inicioABorrar, 0, caret);
+                    string textoPersonalizado = textoAnteriorEditor.Remove(
+                        inicioABorrar, caret - inicioABorrar);
+
+                    procesandoCambioBackspace = true;
+                    try
+                    {
+                        campoEditor.text = textoPersonalizado;
+                    }
+                    finally
+                    {
+                        procesandoCambioBackspace = false;
+                    }
+
+                    nuevoTexto = textoPersonalizado;
+                    FijarCursorEnEditor(inicioABorrar);
+                }
+            }
+
+            textoAnteriorEditor = campoEditor.text;
+            caretAnteriorEditor = campoEditor.caretPosition;
+            anclaAnteriorEditor = campoEditor.selectionAnchorPosition;
+            focoAnteriorEditor = campoEditor.selectionFocusPosition;
+            ultimaPosicionCursorConocida = caretAnteriorEditor;
+
+            // Cada cambio de texto debe recalcular también la altura del contenido.
+            // Este era el punto que hacía que, después de ~11 líneas, Enter siguiera
+            // agregando texto pero el ScrollRect no tuviera contenido adicional al
+            // cual desplazarse.
+            ActualizarEditorSinMoverCursor();
+
+            if (campoEditor.isFocused && !sincronizandoCursorProgramaticamente)
+                AsegurarCursorVisible();
         }
 
         private void ActualizarEditorTrasCambio()
 {
     campoEditor.caretPosition = campoEditor.text.Length;
+    campoEditor.selectionAnchorPosition = campoEditor.caretPosition;
+    campoEditor.selectionFocusPosition = campoEditor.caretPosition;
+    campoEditor.ForceLabelUpdate();
+    textoAnteriorEditor = campoEditor.text;
+    caretAnteriorEditor = campoEditor.caretPosition;
+    anclaAnteriorEditor = campoEditor.selectionAnchorPosition;
+    focoAnteriorEditor = campoEditor.selectionFocusPosition;
     ultimaPosicionCursorConocida = campoEditor.caretPosition;
     ActualizarEditorSinMoverCursor();
 
@@ -840,10 +962,33 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
 
         private void ActualizarEditorSinMoverCursor()
         {
-            float alturaPreferida = campoEditor.textComponent.preferredHeight + 20f;
-            contenedorEditorRect.sizeDelta = new Vector2(contenedorEditorRect.sizeDelta.x, Mathf.Max(200f, alturaPreferida));
+            if (campoEditor == null || contenedorEditorRect == null) return;
 
+            // No dependemos de Text.preferredHeight para dimensionar el contenido.
+            // Con un InputField multilinea dentro de un ScrollRect, ese valor puede
+            // quedarse limitado por la altura actual del propio campo (en este caso
+            // ~200 px, unas 11 líneas), haciendo que el caret visual parezca quedar
+            // atrapado aunque el texto siga creciendo.
+            int cantidadLineas = 1;
+            string texto = campoEditor.text ?? string.Empty;
+            for (int i = 0; i < texto.Length; i++)
+            {
+                if (texto[i] == '\n')
+                    cantidadLineas++;
+            }
+
+            float alturaViewport = scrollTerminal != null && scrollTerminal.viewport != null
+                ? scrollTerminal.viewport.rect.height
+                : 200f;
+            float alturaNecesaria = cantidadLineas * ALTURA_LINEA_EDITOR + 10f;
+            float alturaContenido = Mathf.Max(alturaViewport, alturaNecesaria);
+
+            contenedorEditorRect.sizeDelta = new Vector2(0f, alturaContenido);
+
+            // El InputField y sus Text necesitan tener la nueva geometría antes de
+            // recalcular el scroll.
             Canvas.ForceUpdateCanvases();
+            campoEditor.ForceLabelUpdate();
 
             ActualizarDeteccionDireccion();
             ActualizarNumerosDeLinea();
@@ -895,47 +1040,20 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             return codigo;
         }
 
-        private void OnBorrarUltimaInstruccion()
-        {
-            string texto = campoEditor.text;
-            if (string.IsNullOrEmpty(texto)) return;
-
-            int caret = Mathf.Clamp(campoEditor.isFocused ? campoEditor.caretPosition : ultimaPosicionCursorConocida, 0, texto.Length);
-            if (caret <= 0) return;
-
-            int inicioLinea = texto.LastIndexOf('\n', Mathf.Max(0, caret - 1)) + 1;
-
-            int inicioABorrar;
-            if (caret == inicioLinea)
-            {
-                // El cursor está al principio de la línea (línea vacía): unimos con la
-                // línea anterior borrando solo el salto de línea, no contenido de la anterior.
-                inicioABorrar = inicioLinea - 1;
-            }
-            else
-            {
-                string antesEnLinea = texto.Substring(inicioLinea, caret - inicioLinea);
-                inicioABorrar = inicioLinea + EncontrarInicioTokenABorrar(antesEnLinea);
-            }
-
-            string nuevoTexto = texto.Remove(inicioABorrar, caret - inicioABorrar);
-            campoEditor.text = nuevoTexto;
-
-            // Seguimos enfocados porque el Backspace nació dentro del InputField.
-            // No usamos una corrutina aquí: ActivateInputField() provoca un salto
-            // visual temporal del cursor antes de devolverlo a la posición correcta.
-            FijarCursorEnEditor(inicioABorrar);
-        }
-
         private string PatronInstruccionConParametro
         {
             get
             {
-                var comandos = comandosQueRequierenDireccion
-                    .Where(c => !string.IsNullOrWhiteSpace(c))
-                    .Select(Regex.Escape);
+                var comandos = comandosQueRequierenDireccion == null
+                    ? Array.Empty<string>()
+                    : comandosQueRequierenDireccion
+                        .Where(c => !string.IsNullOrWhiteSpace(c))
+                        .Select(Regex.Escape)
+                        .ToArray();
 
-                return @"(?<!\w)(" + string.Join("|", comandos) + @")\([NSEO]?\)$";
+                return comandos.Length == 0
+                    ? @"(?!x)x"
+                    : @"(?<!\w)(" + string.Join("|", comandos) + @")\([NSEO]?\)$";
             }
         }
 
@@ -1813,6 +1931,7 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
         }
 
         private const float ANCHO_NUMEROS_LINEA = 45f;
+        private const float ALTURA_LINEA_EDITOR = 20f;
 
         private InputField CrearCampoTextoMultilineaConScroll(Transform padre, string nombre, string textoInicial, ScrollRect scrollRect)
         {
@@ -1873,6 +1992,7 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             texto.supportRichText = false;
             texto.horizontalOverflow = HorizontalWrapMode.Wrap;
             texto.verticalOverflow = VerticalWrapMode.Overflow;
+            texto.resizeTextForBestFit = false;
             var textoRect = textoGo.GetComponent<RectTransform>();
             textoRect.anchorMin = Vector2.zero;
             textoRect.anchorMax = Vector2.one;
@@ -1896,11 +2016,14 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             overlayRect.offsetMin = new Vector2(10, 5);
             overlayRect.offsetMax = new Vector2(-10, -5);
 
-            var campo = go.AddComponent<InputFieldPorLinea>();
+            // InputField estándar: dejamos que Unity gestione directamente la cola de
+            // eventos. Esto es importante para ↑/↓ porque mantiene internamente
+            // m_CaretPosition y m_CaretSelectPosition sin que nuestro código los
+            // desincronice. El Backspace especial se reconstruye en AlCambiarTextoEditor().
+            var campo = go.AddComponent<InputField>();
             campo.textComponent = texto;
             campo.lineType = InputField.LineType.MultiLineNewline;
             campo.text = textoInicial;
-            campo.onBackspacePorLinea = OnBorrarUltimaInstruccion;
 
             campo.customCaretColor = true;
             campo.caretColor = Color.white;
@@ -1910,35 +2033,6 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             scrollRect.content = contenedorEditorRect;
 
             return campo;
-        }
-
-        private class InputFieldPorLinea : InputField
-        {
-            public Action onBackspacePorLinea;
-
-            public override void OnUpdateSelected(BaseEventData eventData)
-            {
-                if (!isFocused)
-                    return;
-
-                // Dejamos que Unity procese TODOS los eventos normalmente.
-                // Solo interceptamos Backspace porque el juego necesita borrar la
-                // instrucción completa en vez de un carácter.
-                //
-                // Es importante NO hacer Event.PopEvent() aquí. OnUpdateSelected()
-                // de InputField ya tiene su propio procesamiento interno de eventos
-                // y mantiene correctamente el estado usado por las flechas ↑/↓,
-                // Home/End, selección, Enter, etc.
-                if (Keyboard.current != null &&
-    Keyboard.current.backspaceKey.wasPressedThisFrame)
-{
-    onBackspacePorLinea?.Invoke();
-    eventData.Use();
-    return;
-}
-
-                base.OnUpdateSelected(eventData);
-            }
         }
 
         private InputField CrearCampoTextoUnaLinea(Transform padre, string nombre, string textoPlaceholder,
@@ -2104,6 +2198,8 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             campoEditor.text = "";
             ActualizarEditorTrasCambio();
             entradaEnEdicion = null;
+            textoEditorAntesDeEditarHistorial = "";
+            nombreArchivoAntesDeEditarHistorial = "";
             ActualizarEtiquetaBotonGuardar();
             ActualizarTextoEstado("LISTO", esError: false);
         }
@@ -2163,6 +2259,9 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
 
             campoEditor.text = "";
             ActualizarEditorTrasCambio();
+            textoEditorAntesDeEditarHistorial = "";
+            nombreArchivoAntesDeEditarHistorial = "";
+            ActualizarEtiquetaBotonGuardar();
 
             if (tanquesProgramados < cantidadMinimaTanquesParaJugar)
             {
@@ -2208,6 +2307,8 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
 
             string nombreTanque = entradaEnEdicion.nombre;
             entradaEnEdicion = null;
+            textoEditorAntesDeEditarHistorial = "";
+            nombreArchivoAntesDeEditarHistorial = "";
             ActualizarEtiquetaBotonGuardar();
 
             ReconstruirListaHistorial();
@@ -2216,8 +2317,19 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
 
         private void ActualizarEtiquetaBotonGuardar()
         {
+            bool editandoHistorial = entradaEnEdicion != null;
+
             if (textoBotonGuardarTanque != null)
-                textoBotonGuardarTanque.text = entradaEnEdicion != null ? "ACTUALIZAR" : "GUARDAR";
+                textoBotonGuardarTanque.text = editandoHistorial ? "ACTUALIZAR" : "GUARDAR";
+
+            if (botonCancelarEdicionRef != null)
+            {
+                botonCancelarEdicionRef.gameObject.SetActive(editandoHistorial);
+                botonCancelarEdicionRef.interactable = editandoHistorial;
+            }
+
+            if (textoBotonCancelarEdicion != null)
+                textoBotonCancelarEdicion.text = "CANCELAR";
         }
 
         // Arranca la partida de verdad: le deja los tanques programados y el tamaño
@@ -2250,6 +2362,8 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             scriptsPorTanque.Clear(); // antes esto quedaba desincronizado: el Historial se vaciaba pero los tanques seguían "programados".
             skinsPorTanque.Clear();
             entradaEnEdicion = null;
+            textoEditorAntesDeEditarHistorial = "";
+            nombreArchivoAntesDeEditarHistorial = "";
             modoEliminarActivo = false;
 
             ReconstruirListaHistorial();
@@ -2260,12 +2374,37 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
 
         private void OnSeleccionarHistorial(EntradaHistorial entrada)
         {
+            if (entradaEnEdicion == null)
+            {
+                // Conservamos lo que hubiera en el editor antes de entrar al modo
+                // edición. Si el usuario se arrepiente, CANCELAR lo restaura.
+                textoEditorAntesDeEditarHistorial = campoEditor != null ? campoEditor.text : "";
+                nombreArchivoAntesDeEditarHistorial = nombreArchivoActual;
+            }
+
             campoEditor.text = entrada.contenido;
             ActualizarEditorTrasCambio();
             nombreArchivoActual = entrada.nombre;
             entradaEnEdicion = entrada;
             ActualizarEtiquetaBotonGuardar();
-            ActualizarTextoEstado($"Editando \"{entrada.nombre}\" — al tocar ACTUALIZAR se guardan los cambios en este mismo tanque.", esError: false);
+            ActualizarTextoEstado($"Editando \"{entrada.nombre}\" — puedes ACTUALIZAR o CANCELAR la edición.", esError: false);
+        }
+
+        private void OnCancelarEdicion()
+        {
+            if (entradaEnEdicion == null)
+                return;
+
+            string nombreCancelado = entradaEnEdicion.nombre;
+
+            entradaEnEdicion = null;
+            campoEditor.text = textoEditorAntesDeEditarHistorial;
+            ActualizarEditorTrasCambio();
+            nombreArchivoActual = nombreArchivoAntesDeEditarHistorial;
+            textoEditorAntesDeEditarHistorial = "";
+            nombreArchivoAntesDeEditarHistorial = "";
+            ActualizarEtiquetaBotonGuardar();
+            ActualizarTextoEstado($"Edición de \"{nombreCancelado}\" cancelada. El script original no fue modificado.", esError: false);
         }
 
         // ------------------------------------------------------------------
@@ -2313,6 +2452,8 @@ private IEnumerator EnfocarEditorYFijarCursor(int posicion)
             if (entradaEnEdicion == entrada)
             {
                 entradaEnEdicion = null;
+                textoEditorAntesDeEditarHistorial = "";
+                nombreArchivoAntesDeEditarHistorial = "";
                 ActualizarEtiquetaBotonGuardar();
             }
 

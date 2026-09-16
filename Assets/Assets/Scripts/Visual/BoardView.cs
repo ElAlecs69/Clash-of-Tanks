@@ -1544,7 +1544,8 @@ namespace TanksGame.Visual
         // incinerado y volcado a 0%. Úsala desde el GameManager pasando la
         // vida real de cada tanque en vez de la sobrecarga de arriba.
         public void ActualizarTanques(
-            IEnumerable<(int playerId, Vector2Int posicion, bool vivo, int vidaPorcentaje, TanqueSkinDatos skin)> tanques)
+            IEnumerable<(int playerId, Vector2Int posicion, bool vivo, int vidaPorcentaje, TanqueSkinDatos skin)> tanques,
+            bool animarMovimiento = true)
         {
             foreach (var (playerId, posicion, vivo, vidaPorcentaje, skin) in tanques)
             {
@@ -1590,6 +1591,8 @@ namespace TanksGame.Visual
                 if (Vector3.Distance(new Vector3(visual.localPosition.x, 0f, visual.localPosition.z),
                         new Vector3(destino.x, 0f, destino.z)) < 0.001f)
                     continue;
+
+                if (!animarMovimiento) continue; // lo animará ReproducirRondaSecuencial, en orden
 
                 if (movimientosEnCurso.TryGetValue(playerId, out var enCurso) && enCurso != null)
                     StopCoroutine(enCurso);
@@ -1900,6 +1903,128 @@ namespace TanksGame.Visual
                 yield return ReproducirUnDisparo(disparo);
         }
 
+        // --------------------------------------------------------------
+        // RONDA COMPLETA EN ORDEN: mueve y dispara tanque por tanque, en el
+        // mismo orden en que TurnManager.ExecuteRound() los procesó. Antes,
+        // ActualizarTanques() arrancaba una corrutina de movimiento POR
+        // tanque en el mismo frame (todas a la vez, en paralelo) y los
+        // disparos se reproducían aparte, también en paralelo respecto a
+        // los movimientos. Ahora todo pasa por una única corrutina: no
+        // arranca el paso del siguiente tanque hasta que el anterior
+        // termina de moverse Y de disparar.
+        // --------------------------------------------------------------
+        public class PasoRonda
+        {
+            public int PlayerId;
+            public bool SeMovio;
+            public Vector2Int Destino;
+            public ShotEvent Disparo; // null si ese tanque no disparó esta ronda
+        }
+
+        // Espejo visual de Gameplay.DamageEvent: mina, choque o desgaste.
+        public class EventoDanoVisual
+        {
+            public DamageEventType Tipo;
+            public Vector2Int Celda;
+            public List<int> TargetIds;
+            public Dictionary<int, int> VidaPorcentajeDespuesPorId;
+            public HashSet<int> DestruidosIds;
+        }
+
+        private bool _rondaEnAnimacion;
+        public bool RondaEnAnimacion => _rondaEnAnimacion;
+
+        public void ReproducirRondaSecuencial(List<PasoRonda> pasos, List<EventoDanoVisual> eventos = null)
+        {
+            StartCoroutine(ReproducirRondaSecuencialCoroutine(pasos, eventos));
+        }
+
+        private System.Collections.IEnumerator ReproducirRondaSecuencialCoroutine(
+            List<PasoRonda> pasos, List<EventoDanoVisual> eventos)
+        {
+            _rondaEnAnimacion = true;
+            foreach (var paso in pasos)
+            {
+                if (paso.SeMovio && tanquesVisuales.TryGetValue(paso.PlayerId, out var visual) && visual != null)
+                {
+                    var destinoMundo = CeldaAPosicionMundo(paso.Destino.x, paso.Destino.y);
+                    if (movimientosEnCurso.TryGetValue(paso.PlayerId, out var enCurso) && enCurso != null)
+                        StopCoroutine(enCurso);
+                    yield return MoverTanqueSuave(visual, destinoMundo);
+                }
+
+                if (paso.Disparo != null)
+                    yield return ReproducirUnDisparo(paso.Disparo);
+            }
+
+            if (eventos != null)
+                foreach (var evento in eventos)
+                    yield return ReproducirEventoDeDano(evento);
+
+            _rondaEnAnimacion = false;
+        }
+
+        // Reproduce la detonación de una mina, un choque entre tanques o la
+        // sacudida de desgaste, y RECIÉN AHÍ aplica la apariencia dañada de
+        // cada tanque afectado -- misma idea que con los disparos: nunca se
+        // ve "ya dañado" antes de que el evento pase en pantalla.
+        private System.Collections.IEnumerator ReproducirEventoDeDano(EventoDanoVisual evento)
+        {
+            float alturaExplosion = 0.4f * _escalaObjetos;
+            Vector3 puntoMundo = PuntoDeFuegoEnCelda(evento.Celda.x, evento.Celda.y, alturaExplosion);
+
+            switch (evento.Tipo)
+            {
+                case DamageEventType.Mina:
+                    yield return Explosion(puntoMundo, 0.9f);
+                    break;
+                case DamageEventType.Choque:
+                    yield return Explosion(puntoMundo, 1.0f);
+                    break;
+                case DamageEventType.Desgaste:
+                    // Sin explosión (no hay proyectil ni detonación real):
+                    // una sacudida breve del propio tanque contra el
+                    // obstáculo/borde con el que chocó.
+                    foreach (var id in evento.TargetIds)
+                        if (tanquesVisuales.TryGetValue(id, out var visualSacudida) && visualSacudida != null)
+                            yield return SacudirTanque(visualSacudida);
+                    break;
+            }
+
+            foreach (var id in evento.TargetIds)
+            {
+                if (!tanquesVisuales.TryGetValue(id, out var visualObjetivo) || visualObjetivo == null) continue;
+
+                if (evento.DestruidosIds.Contains(id))
+                    visualObjetivo.gameObject.SetActive(false);
+                else if (evento.VidaPorcentajeDespuesPorId.TryGetValue(id, out var vidaDespues))
+                    AplicarEstadoDeDano(visualObjetivo, vidaDespues);
+            }
+        }
+
+        // Pequeño golpe/vibración para el desgaste por estancamiento: no hay
+        // explosión ni proyectil, así que un choque brusco corto contra la
+        // dirección en la que el tanque venía intentando moverse comunica
+        // mejor "chocaste contra algo" que un simple cambio de color.
+        private System.Collections.IEnumerator SacudirTanque(Transform visual)
+        {
+            Vector3 posOriginal = visual.localPosition;
+            Vector3 direccionSacudida = visual.forward * (0.12f * _escalaObjetos);
+
+            float duracion = 0.18f;
+            float tiempo = 0f;
+            while (tiempo < duracion)
+            {
+                tiempo += Time.deltaTime;
+                float t = tiempo / duracion;
+                float onda = Mathf.Sin(t * Mathf.PI * 3f) * (1f - t);
+                visual.localPosition = posOriginal + direccionSacudida * onda;
+                yield return null;
+            }
+
+            visual.localPosition = posOriginal;
+        }
+
         private System.Collections.IEnumerator ReproducirUnDisparo(ShotEvent disparo)
         {
             float alturaCanon = 0.55f * _escalaObjetos;
@@ -1926,13 +2051,41 @@ namespace TanksGame.Visual
             // rápido, justo donde está el tanque que dispara.
             yield return DestelloFogonazo(origen);
 
-            // Proyectil: una cápsula orientada hacia el destino, viajando en
-            // línea recta con un rastro (LineRenderer) detrás. El MISIL vuela
-            // más lento y grande (como un cohete); el AMT es un trazo rápido
-            // (como un cañonazo directo).
-            float duracionVuelo = disparo.EsMisil ? 0.45f : 0.18f;
-            float grosor = disparo.EsMisil ? 0.09f : 0.045f;
-            Color colorProyectil = disparo.EsMisil ? new Color(1f, 0.55f, 0.1f) : new Color(1f, 0.9f, 0.4f);
+            // Proyectil. El MISIL vuela como un cohete: una sola cápsula
+            // grande y lenta con estela. El AMT ya NO usa el mismo modelo a
+            // menor escala (antes se veía como "un mini misil"); dispara una
+            // ráfaga real de varias balas pequeñas y rápidas en sucesión,
+            // como una ametralladora.
+            if (disparo.EsMisil)
+                yield return VueloDeMisil(origen, destino);
+            else
+                yield return RafagaDeAmt(origen, destino);
+
+            yield return Explosion(destino, disparo.EsMisil ? 1.3f : 0.6f);
+
+            // Recién ahora, con la explosión ya en pantalla, se actualiza la
+            // apariencia del tanque golpeado (chapa quemada/humo, o volcado
+            // y ocultamiento si quedó destruido). Antes esto se aplicaba de
+            // golpe al principio de la ronda -- se veía dañado antes de que
+            // el disparo siquiera saliera.
+            if (disparo.TargetId != -1 && tanquesVisuales.TryGetValue(disparo.TargetId, out var visualObjetivo)
+                && visualObjetivo != null)
+            {
+                if (disparo.TargetDestruido)
+                    visualObjetivo.gameObject.SetActive(false);
+                else
+                    AplicarEstadoDeDano(visualObjetivo, disparo.TargetVidaPorcentajeDespues);
+            }
+        }
+
+        // Vuelo del MISIL: una sola cápsula grande, lenta, con estela larga
+        // -- como un cohete. Esto es exactamente lo que antes hacía también
+        // el AMT (a menor escala); ahora es exclusivo del MISIL.
+        private System.Collections.IEnumerator VueloDeMisil(Vector3 origen, Vector3 destino)
+        {
+            const float duracionVuelo = 0.45f;
+            const float grosor = 0.09f;
+            var colorProyectil = new Color(1f, 0.55f, 0.1f);
 
             var proyectilGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             proyectilGo.transform.SetParent(transform, true);
@@ -1949,7 +2102,7 @@ namespace TanksGame.Visual
             proyectilGo.transform.rotation = rotacionVuelo;
 
             var rastro = proyectilGo.AddComponent<TrailRenderer>();
-            rastro.time = disparo.EsMisil ? 0.35f : 0.15f;
+            rastro.time = 0.35f;
             rastro.startWidth = grosor * 1.4f;
             rastro.endWidth = 0f;
             rastro.material = new Material(ObtenerShaderEstandar());
@@ -1966,8 +2119,80 @@ namespace TanksGame.Visual
             }
 
             Destroy(proyectilGo, rastro.time);
+        }
 
-            yield return Explosion(destino, disparo.EsMisil ? 1.3f : 0.8f);
+        // Ráfaga del AMT: varias balas pequeñas y muy rápidas, disparadas en
+        // sucesión (no una sola a la vez), como una ametralladora de
+        // verdad -- ya no comparte el modelo "cohete" del MISIL.
+        private System.Collections.IEnumerator RafagaDeAmt(Vector3 origen, Vector3 destino)
+        {
+            const int numeroDeBalas = 5;
+            const float duracionPorBala = 0.08f;
+            const float espacioEntreBalas = 0.035f;
+
+            var direccionVuelo = (destino - origen);
+            var rotacionVuelo = direccionVuelo.sqrMagnitude > 0.0001f
+                ? Quaternion.LookRotation(direccionVuelo.normalized, Vector3.up) * Quaternion.Euler(90f, 0f, 0f)
+                : Quaternion.identity;
+
+            for (int i = 0; i < numeroDeBalas; i++)
+            {
+                StartCoroutine(VolarBala(origen, destino, rotacionVuelo, duracionPorBala));
+                yield return new WaitForSeconds(espacioEntreBalas);
+            }
+
+            // Espera a que la última bala termine de volar antes de que
+            // ReproducirUnDisparo dispare la explosión final del impacto.
+            yield return new WaitForSeconds(duracionPorBala);
+        }
+
+        // Una sola bala de la ráfaga de AMT: mucho más chica y rápida que el
+        // MISIL, con una estela cortita y una chispa de impacto pequeña (la
+        // explosión grande del impacto la pone ReproducirUnDisparo una sola
+        // vez, al final de toda la ráfaga).
+        private System.Collections.IEnumerator VolarBala(Vector3 origen, Vector3 destino, Quaternion rotacion, float duracion)
+        {
+            const float grosor = 0.028f;
+            var colorBala = new Color(1f, 0.9f, 0.4f);
+
+            var balaGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            balaGo.transform.SetParent(transform, true);
+            balaGo.transform.localScale = new Vector3(grosor, grosor * 2.2f, grosor);
+            var colliderBala = balaGo.GetComponent<Collider>();
+            if (colliderBala != null) Destroy(colliderBala);
+            var rendererBala = balaGo.GetComponent<Renderer>();
+            if (rendererBala != null) rendererBala.material.color = colorBala;
+            balaGo.transform.rotation = rotacion;
+
+            var rastro = balaGo.AddComponent<TrailRenderer>();
+            rastro.time = 0.08f;
+            rastro.startWidth = grosor * 1.2f;
+            rastro.endWidth = 0f;
+            rastro.material = new Material(ObtenerShaderEstandar());
+            rastro.startColor = colorBala;
+            rastro.endColor = new Color(colorBala.r, colorBala.g, colorBala.b, 0f);
+
+            float tiempo = 0f;
+            while (tiempo < duracion)
+            {
+                tiempo += Time.deltaTime;
+                float t = Mathf.Clamp01(tiempo / duracion);
+                balaGo.transform.position = Vector3.Lerp(origen, destino, t);
+                yield return null;
+            }
+
+            Destroy(balaGo, rastro.time);
+
+            // Chispa breve de impacto de esta bala en particular.
+            var chispaGo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            chispaGo.transform.SetParent(transform, true);
+            chispaGo.transform.position = destino;
+            chispaGo.transform.localScale = Vector3.one * (grosor * 4f);
+            var colliderChispa = chispaGo.GetComponent<Collider>();
+            if (colliderChispa != null) Destroy(colliderChispa);
+            var rendererChispa = chispaGo.GetComponent<Renderer>();
+            if (rendererChispa != null) rendererChispa.material.color = colorBala;
+            Destroy(chispaGo, 0.08f);
         }
 
         // Gira el tanque visual (con la misma velocidad angular que usa para
