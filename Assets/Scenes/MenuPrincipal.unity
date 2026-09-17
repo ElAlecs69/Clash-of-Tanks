@@ -298,7 +298,7 @@ MonoBehaviour:
   sonidoCambio: {fileID: 8300000, guid: 1d4ec4ebc029f914a8864e139064c950, type: 3}
   musicaFondo: {fileID: 8300000, guid: 158cc6e6f686bce4390459c3c9581472, type: 3}
   volumenMusica: 0.5
-  videoFondoInicio: {fileID: 0}
+  videoFondoInicio: {fileID: 32900000, guid: 9a01dc5089ee12a42ad7288fcbfe0f54, type: 3}
   opacidadDegradadoVideo: 0.62
   textoCreditos: 'CLASH OF TANKS
 

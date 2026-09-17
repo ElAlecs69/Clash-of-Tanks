@@ -30,6 +30,16 @@ namespace TanksGame.Gameplay
         public bool TargetDestruido;
     }
 
+    // Un escaneo de RADAR ocurrido durante la ronda, con los datos que la
+    // vista necesita para animar el barrido en la dirección consultada.
+    public class RadarEvent
+    {
+        public int ShooterId;
+        public Vector2Int Origin;
+        public Direction Dir;
+        public int Valor;
+    }
+
     public enum DamageEventType { Mina, Choque, Desgaste }
 
     // Un daño ocurrido durante la ronda que NO viene de un disparo (mina,
@@ -42,6 +52,12 @@ namespace TanksGame.Gameplay
     {
         public DamageEventType Tipo;
         public Vector2Int Celda;
+        // Solo para Choque ENTRE DOS TANQUES: la celda del segundo tanque
+        // involucrado, para que la vista pueda ubicar la explosión a mitad
+        // de camino entre ambos en vez de encima de uno solo. Null en
+        // choque contra obstáculo (ahí sí hay una única celda real) y en
+        // mina/desgaste.
+        public Vector2Int? CeldaB;
         public List<int> TargetIds = new List<int>();
         public Dictionary<int, int> VidaPorcentajeDespuesPorId = new Dictionary<int, int>();
         public HashSet<int> DestruidosIds = new HashSet<int>();
@@ -57,6 +73,7 @@ namespace TanksGame.Gameplay
         public List<TankAgent> Agents;
         public List<string> LastRoundLog = new List<string>();
         public List<ShotEvent> LastRoundShots = new List<ShotEvent>();
+        public List<RadarEvent> LastRoundRadars = new List<RadarEvent>();
         // Eventos de daño de esta ronda que NO son disparos, EN ORDEN
         // (minas primero, luego choques, luego desgaste -- el mismo orden
         // en que ExecuteRound los procesa).
@@ -82,6 +99,7 @@ namespace TanksGame.Gameplay
         {
             LastRoundLog.Clear();
             LastRoundShots.Clear();
+            LastRoundRadars.Clear();
             LastRoundDamageEvents.Clear();
             bool huboDanio = false;
 
@@ -89,11 +107,13 @@ namespace TanksGame.Gameplay
             foreach (var agent in Agents)
                 agent.Tank.ShieldActive = false;
 
-            // Se arman las minas que vienen de rondas anteriores. Las minas
-            // colocadas en ESTA ronda (por la instrucción Mina, más abajo)
-            // quedan desarmadas y no podrán hacer daño hasta la ronda
-            // siguiente.
-            Board.ArmarMinasPendientes();
+            // Avanza el contador de ronda del tablero. Ya NO depende de que
+            // esto se llame antes de procesar las instrucciones (ver el
+            // comentario de GridBoard.AvanzarRonda): una mina colocada más
+            // abajo, en esta misma ronda, queda sellada con el número de
+            // ronda actual pase lo que pase, y solo se arma sola a partir de
+            // la ronda siguiente.
+            Board.AvanzarRonda();
 
             foreach (var agent in Agents)
             {
@@ -147,8 +167,62 @@ namespace TanksGame.Gameplay
                     }
                     if (Board.IsObstacle(newPos))
                     {
-                        LastRoundLog.Add($"Jugador {tank.PlayerId}: MOV({dir}) bloqueado por un obstáculo.");
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: MOV({dir}) bloqueado, choca contra un obstáculo.");
                         RegistrarTurnoAtascado(agent);
+
+                        // Chocar contra un obstáculo (montaña, o la chatarra de un
+                        // tanque ya destruido) hace el mismo daño que un choque
+                        // entre dos tanques (sección de choques): -12%.
+                        if (AplicarDanio(tank, 12f)) huboDanio = true;
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: choque contra el obstáculo (-12%).");
+                        HandleIfDestroyed(tank);
+
+                        LastRoundDamageEvents.Add(new DamageEvent
+                        {
+                            Tipo = DamageEventType.Choque,
+                            Celda = newPos,
+                            TargetIds = { tank.PlayerId },
+                            VidaPorcentajeDespuesPorId = { [tank.PlayerId] = Mathf.RoundToInt(tank.Health) },
+                            DestruidosIds = tank.IsAlive ? new HashSet<int>() : new HashSet<int> { tank.PlayerId }
+                        });
+
+                        break;
+                    }
+
+                    // Otro tanque, todavía vivo, ya ocupa esa casilla -- porque no
+                    // se movió esta ronda, o porque le tocó antes en el orden de
+                    // Agents y ya "ganó" la casilla. Para el que llega segundo esa
+                    // casilla es una pared: se queda donde está, y AMBOS se hacen
+                    // el mismo daño que un choque (-12% cada uno) -- el que ya
+                    // estaba ahí no tiene la culpa, pero el golpe lo siente igual.
+                    var ocupante = AliveTanks().FirstOrDefault(t => t != tank && t.Position == newPos);
+                    if (ocupante != null)
+                    {
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: MOV({dir}) bloqueado, choca contra Jugador {ocupante.PlayerId}.");
+                        RegistrarTurnoAtascado(agent);
+
+                        if (AplicarDanio(tank, 12f)) huboDanio = true;
+                        if (AplicarDanio(ocupante, 12f)) huboDanio = true;
+                        LastRoundLog.Add(
+                            $"Choque entre Jugador {tank.PlayerId} y Jugador {ocupante.PlayerId} (-12% cada uno).");
+                        HandleIfDestroyed(tank);
+                        HandleIfDestroyed(ocupante);
+
+                        LastRoundDamageEvents.Add(new DamageEvent
+                        {
+                            Tipo = DamageEventType.Choque,
+                            Celda = tank.Position,
+                            CeldaB = newPos,
+                            TargetIds = { tank.PlayerId, ocupante.PlayerId },
+                            VidaPorcentajeDespuesPorId =
+                            {
+                                [tank.PlayerId] = Mathf.RoundToInt(tank.Health),
+                                [ocupante.PlayerId] = Mathf.RoundToInt(ocupante.Health)
+                            },
+                            DestruidosIds = new HashSet<int>(
+                                new[] { tank, ocupante }.Where(t => !t.IsAlive).Select(t => t.PlayerId))
+                        });
+
                         break;
                     }
 
@@ -241,8 +315,16 @@ namespace TanksGame.Gameplay
                 case InstructionType.Radar:
                 {
                     var dir = instruction.Dir ?? tank.Facing;
+                    tank.Facing = dir;
                     var value = Radar(tank, dir);
                     LastRoundLog.Add($"Jugador {tank.PlayerId}: RADAR({dir}) = {value}.");
+                    LastRoundRadars.Add(new RadarEvent
+                    {
+                        ShooterId = tank.PlayerId,
+                        Origin = tank.Position,
+                        Dir = dir,
+                        Valor = value
+                    });
                     RegistrarTurnoNoAtascado(agent);
                     break;
                 }
@@ -325,6 +407,11 @@ namespace TanksGame.Gameplay
             }
         }
 
+        // Con el chequeo de "casilla ocupada" agregado a MOV, un tanque ya no
+        // puede terminar la ronda superpuesto con otro que siga vivo (el que
+        // llega segundo se frena antes). Esto queda solo como red de
+        // seguridad ante algún otro camino no contemplado hacia el mismo
+        // resultado.
         private void CheckCollisions(ref bool huboDanio)
         {
             var alive = AliveTanks().ToList();
@@ -334,10 +421,10 @@ namespace TanksGame.Gameplay
                 {
                     if (alive[i].Position == alive[j].Position)
                     {
-                        if (AplicarDanio(alive[i], 25f)) huboDanio = true;
-                        if (AplicarDanio(alive[j], 25f)) huboDanio = true;
+                        if (AplicarDanio(alive[i], 12f)) huboDanio = true;
+                        if (AplicarDanio(alive[j], 12f)) huboDanio = true;
                         LastRoundLog.Add(
-                            $"Choque entre Jugador {alive[i].PlayerId} y Jugador {alive[j].PlayerId} (-25% cada uno).");
+                            $"Choque entre Jugador {alive[i].PlayerId} y Jugador {alive[j].PlayerId} (-12% cada uno).");
                         HandleIfDestroyed(alive[i]);
                         HandleIfDestroyed(alive[j]);
 
@@ -345,6 +432,7 @@ namespace TanksGame.Gameplay
                         {
                             Tipo = DamageEventType.Choque,
                             Celda = alive[i].Position,
+                            CeldaB = alive[j].Position,
                             TargetIds = { alive[i].PlayerId, alive[j].PlayerId },
                             VidaPorcentajeDespuesPorId =
                             {

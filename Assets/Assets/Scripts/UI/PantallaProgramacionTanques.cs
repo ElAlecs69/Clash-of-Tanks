@@ -19,10 +19,10 @@ namespace TanksGame.UI
     // vista previa del tanque + personalización de skin).
     //
     // Flujo de programación de tanques (resumen):
-    //  1. Escribís el script del tanque en el editor.
-    //  2. Tocás "GUARDAR" (pie de la Terminal): valida la sintaxis, lo agrega al
+    //  1. Escribes el script del tanque en el editor.
+    //  2. Tocas "GUARDAR" (pie de la Terminal): valida la sintaxis, lo agrega al
     //     Historial como "Tanque N" y cuenta ese tanque como programado. El editor se
-    //     limpia solo después de cada guardado, así podés seguir directo con el
+    //     limpia solo después de cada guardado, así puedes seguir directo con el
     //     próximo tanque (mientras no se llegue al mínimo jugable, esto es obligatorio).
     //  3. "ELIMINAR SCRIPT DE TANQUE" (arriba a la derecha de la Terminal) alterna un
     //     modo donde aparece un "-" junto a cada tanque del Historial, para borrar el
@@ -148,6 +148,7 @@ namespace TanksGame.UI
         private Button botonEliminarScriptRef;
         private Text textoBotonEliminarScript;
         private Text textoBotonGuardarTanque;
+        private RectTransform rectBotonGuardarTanque;
         private Button botonCancelarEdicionRef;
         private Text textoBotonCancelarEdicion;
         private string textoEditorAntesDeEditarHistorial = "";
@@ -361,6 +362,7 @@ namespace TanksGame.UI
 
             ReconstruirListaHistorial();
             ActualizarBotonEliminarScript();
+            ActualizarEtiquetaBotonGuardar();
             ActualizarTextoEstado("LISTO", esError: false);
         }
 
@@ -822,10 +824,18 @@ private void AsegurarCursorVisible()
 
             textoEstado = CrearRectElasticoTextoInferior(panel.transform);
 
+            // GUARDAR/ACTUALIZAR y CANCELAR se reparten en dos mitades iguales el
+            // espacio que va desde el borde izquierdo de la terminal (x=15) hasta
+            // el borde izquierdo de la rosa de los vientos (panelRight - 165, ver
+            // ConstruirPanelRosaVientos). El punto medio de ese tramo es
+            // 0.5*ancho - 75; cada botón usa la mitad con un pequeño respiro de
+            // 10px entre ambos, y CANCELAR termina justo donde empieza la rosa
+            // (sin taparse ni superponerse).
             var botonGuardarTanque = CrearRectElastico(panel.transform, "BotonGuardarScriptTanque",
-                new Vector2(0, 0), new Vector2(1, 0),
-                new Vector2(15, 46), new Vector2(-95, 85),
+                new Vector2(0, 0), new Vector2(0.5f, 0),
+                new Vector2(15, 46), new Vector2(-80, 85),
                 colorBoton, null);
+            rectBotonGuardarTanque = botonGuardarTanque.GetComponent<RectTransform>();
             var btnGuardarTanque = botonGuardarTanque.AddComponent<Button>();
             btnGuardarTanque.targetGraphic = botonGuardarTanque.GetComponent<Image>();
             btnGuardarTanque.onClick.AddListener(OnGuardarScriptDelTanque);
@@ -842,8 +852,8 @@ private void AsegurarCursorVisible()
             textoRect.offsetMax = Vector2.zero;
 
             var botonCancelarEdicion = CrearRectElastico(panel.transform, "BotonCancelarEdicion",
-                new Vector2(1, 0), new Vector2(1, 0),
-                new Vector2(-175, 46), new Vector2(-95, 85),
+                new Vector2(0.5f, 0), new Vector2(1, 0),
+                new Vector2(-70, 46), new Vector2(-165, 85),
                 colorBotonAccentoRojo, null);
             botonCancelarEdicionRef = botonCancelarEdicion.AddComponent<Button>();
             botonCancelarEdicionRef.targetGraphic = botonCancelarEdicion.GetComponent<Image>();
@@ -2283,8 +2293,9 @@ private void AsegurarCursorVisible()
         }
 
         // Actualiza el script de un tanque que ya estaba guardado (el que se cargó
-        // con un click en el Historial) en vez de agregar uno nuevo. El editor NO se
-        // limpia acá: se deja el texto actualizado a la vista, como confirmación.
+        // con un click en el Historial) en vez de agregar uno nuevo. Igual que al
+        // guardar un tanque nuevo, se limpia el editor después: dejar el código
+        // ahí confundía, porque parecía que seguías editando ese mismo tanque.
         private void ActualizarTanqueExistente(string texto)
         {
             int indice = historial.IndexOf(entradaEnEdicion);
@@ -2309,6 +2320,9 @@ private void AsegurarCursorVisible()
             entradaEnEdicion = null;
             textoEditorAntesDeEditarHistorial = "";
             nombreArchivoAntesDeEditarHistorial = "";
+
+            campoEditor.text = "";
+            ActualizarEditorTrasCambio();
             ActualizarEtiquetaBotonGuardar();
 
             ReconstruirListaHistorial();
@@ -2326,6 +2340,20 @@ private void AsegurarCursorVisible()
             {
                 botonCancelarEdicionRef.gameObject.SetActive(editandoHistorial);
                 botonCancelarEdicionRef.interactable = editandoHistorial;
+            }
+
+            // Sin CANCELAR a la vista (modo normal, no editando), GUARDAR vuelve a
+            // ocupar todo el ancho original de la terminal (hasta antes de la rosa
+            // de los vientos). Editando un tanque del Historial, CANCELAR aparece
+            // y GUARDAR/ACTUALIZAR se achica a su mitad para no superponerse.
+            if (rectBotonGuardarTanque != null)
+            {
+                rectBotonGuardarTanque.anchorMax = editandoHistorial
+                    ? new Vector2(0.5f, 0f)
+                    : new Vector2(1f, 0f);
+                rectBotonGuardarTanque.offsetMax = editandoHistorial
+                    ? new Vector2(-80, 85)
+                    : new Vector2(-95, 85);
             }
 
             if (textoBotonCancelarEdicion != null)

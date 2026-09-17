@@ -571,6 +571,7 @@ MonoBehaviour:
   colorJugador1: {r: 0.2, g: 0.4, b: 0.9, a: 1}
   colorJugador2: {r: 0.9, g: 0.25, b: 0.2, a: 1}
   duracionMovimiento: 0.35
+  velocidadGiroTanque: 260
   generarPaisaje: 1
   escalaPaisaje: 1
   sierraPegadaAlTablero: 0.9
@@ -591,9 +592,23 @@ MonoBehaviour:
   prefabAvion: {fileID: 919132149155446097, guid: 91fc0800d3cd5224a95d99198519c310, type: 3}
   escalaPrefabAvion: 0.3
   rotacionExtraAvion: {x: 0, y: 0, z: 0}
+  ajustarCamaraAutomaticamente: 1
+  tableroReferenciaCamara: {x: 10, y: 10}
+  margenExtraCamara: 1
+  correccionCentroCamara: {x: 0, y: 0, z: 0}
+  correccionCentroCamaraProporcional: {x: 0, y: 0, z: 0}
+  objetivoCamaraAlternativo: {fileID: 0}
+  camaraJuego: {fileID: 0}
+  ajustarCampoDeVisionTambien: 1
   intervaloAvion: 22
   duracionVueloAvion: 13
   biomaActual: 0
+  sonidoImpactoMisil: {fileID: 8300000, guid: b1ef9f6e73c3efb4f80c03cd9ad138f5, type: 3}
+  sonidoExplosionMina: {fileID: 8300000, guid: bafd847491b7bb649977ff0a1710b0d1, type: 3}
+  sonidoAmetralladora: {fileID: 8300000, guid: 59b23ffca1fcac14fa0ca56247ff7acf, type: 3}
+  sonidoMovimientoTanque: {fileID: 8300000, guid: 339b9573d74368e45afa0700bc0c22b6, type: 3}
+  sonidoRadar: {fileID: 8300000, guid: 68278d3c3a8a3654999723a2124c12c9, type: 3}
+  volumenEfectos: 0.7
 --- !u!4 &1461863335
 Transform:
   m_ObjectHideFlags: 0
@@ -643,6 +658,13 @@ MonoBehaviour:
   espacioEntrePaneles: 20
   margenBorde: 20
   segundosPorTurno: 1.5
+  nombreEscenaMenu: MenuPrincipal
+  sonidoClick: {fileID: 8300000, guid: b73de41b5397990449b7aed7bd29957b, type: 3}
+  sonidoCambio: {fileID: 8300000, guid: 1d4ec4ebc029f914a8864e139064c950, type: 3}
+  sonidoPausa: {fileID: 8300000, guid: b73de41b5397990449b7aed7bd29957b, type: 3}
+  fondoPausa: {fileID: 21300000, guid: 42b5e3cbe7906d44e9f0e258a7e3c6b0, type: 3}
+  musicaFondo: {fileID: 0}
+  volumenMusica: 0.5
 --- !u!4 &2012781288
 Transform:
   m_ObjectHideFlags: 0

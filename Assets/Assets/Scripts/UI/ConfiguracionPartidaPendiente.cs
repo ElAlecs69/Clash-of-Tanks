@@ -22,12 +22,27 @@ namespace TanksGame.Core
         public static IReadOnlyList<TanqueSkinDatos> SkinsPorTanque { get; private set; }
         public static int TamanoTablero { get; private set; }
 
+        // Copia de la última partida armada, para el botón "REPETIR" del final
+        // de la partida (repetir la MISMA configuración sin volver a pasar por
+        // la pantalla de programación). A diferencia de lo anterior, esto NO se
+        // borra en Limpiar(): sigue disponible incluso después de que el
+        // GameManager ya consumió la configuración pendiente.
+        public static bool HayUltimaPartida { get; private set; }
+        public static IReadOnlyList<string> UltimaScriptsPorTanque { get; private set; }
+        public static IReadOnlyList<TanqueSkinDatos> UltimaSkinsPorTanque { get; private set; }
+        public static int UltimoTamanoTablero { get; private set; }
+
         public static void Establecer(IReadOnlyList<string> scriptsPorTanque, IReadOnlyList<TanqueSkinDatos> skinsPorTanque, int tamanoTablero)
         {
             ScriptsPorTanque = scriptsPorTanque;
             SkinsPorTanque = skinsPorTanque;
             TamanoTablero = tamanoTablero;
             Hay = true;
+
+            UltimaScriptsPorTanque = scriptsPorTanque;
+            UltimaSkinsPorTanque = skinsPorTanque;
+            UltimoTamanoTablero = tamanoTablero;
+            HayUltimaPartida = true;
         }
 
         // El GameManager llama a esto apenas termina de leer los datos, para que si
@@ -39,6 +54,17 @@ namespace TanksGame.Core
             Hay = false;
             ScriptsPorTanque = null;
             SkinsPorTanque = null;
+        }
+
+        // Usado por el botón "REPETIR": vuelve a dejar lista la última
+        // configuración jugada para que el GameManager la lea de nuevo al
+        // recargar la escena de juego, sin pasar por la pantalla de
+        // programación.
+        public static bool PrepararRepeticion()
+        {
+            if (!HayUltimaPartida) return false;
+            Establecer(UltimaScriptsPorTanque, UltimaSkinsPorTanque, UltimoTamanoTablero);
+            return true;
         }
     }
 }

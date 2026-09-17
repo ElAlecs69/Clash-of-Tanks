@@ -82,6 +82,10 @@ namespace TanksGame.Visual
         public Vector2Int tableroReferenciaCamara = new Vector2Int(10, 10);
         [Tooltip("Multiplicador extra sobre el alejamiento calculado, por si quieres un poco más o menos margen alrededor del tablero.")]
         [Range(0.5f, 2f)] public float margenExtraCamara = 1f;
+        [Tooltip("Ajuste manual, en unidades de mundo, para terminar de centrar el tablero en pantalla si el encuadre automático queda un poco corrido. X mueve el punto de mira a la izquierda/derecha, Z arriba/abajo en pantalla (según el ángulo de la cámara). Su efecto es MÁS FUERTE cuanto más chico es el tablero (a igual valor, en un 3x3 se nota mucho más que en un 20x20), así que ajustalo probando con un tablero chico (por ejemplo 3x3).")]
+        public Vector3 correccionCentroCamara = Vector3.zero;
+        [Tooltip("Segundo ajuste manual, también en unidades de mundo, pero con efecto CONSTANTE en pantalla sin importar el tamaño del tablero (a diferencia de 'Correccion Centro Camara', que pesa más en tableros chicos). Usalo para corregir un corrimiento que se nota igual de fuerte en 3x3 y en 20x20 -- por ejemplo si necesitás mover el tablero para un lado en un tamaño chico y para el lado contrario en uno grande: primero ajustá 'Correccion Centro Camara' mirando un tablero chico, y después este otro mirando uno grande, sin que se te desarme el chico.")]
+        public Vector3 correccionCentroCamaraProporcional = Vector3.zero;
         [Tooltip("Opcional: si la cámara sigue a un objeto (por ejemplo un 'CameraTarget' del que cuelga un script de seguimiento) en vez de moverse directamente, asigna aquí ese objeto para que el ajuste se aplique a él en lugar de a la cámara.")]
         public Transform objetivoCamaraAlternativo;
         [Tooltip("Cámara real del juego. Solo hace falta si tu cámara NO tiene el tag 'MainCamera' (Camera.main no la encontraría) o si usas varias cámaras y quieres apuntar a una en concreto.")]
@@ -120,6 +124,7 @@ namespace TanksGame.Visual
         private Quaternion _rotacionCamaraReferencia;
         private float _ladoReferenciaCamara = 10f;
         private float _fovReferenciaCamara = 60f;
+        private float _orthoSizeReferencia = 5f;
 
         private float superficieCeldaMundoY;
         private bool superficieCalculada;
@@ -158,9 +163,44 @@ namespace TanksGame.Visual
         // ---------------------------------------------------------------------
         // CONSTRUCCIÓN
         // ---------------------------------------------------------------------
+        [Header("Efectos de sonido (opcionales)")]
+        [Tooltip("Se reproduce cuando un MISIL impacta (al final de su vuelo).")]
+        public AudioClip sonidoImpactoMisil;
+        [Tooltip("Se reproduce cuando detona una mina.")]
+        public AudioClip sonidoExplosionMina;
+        [Tooltip("Se reproduce al arrancar cada ráfaga de ametralladora (AMT).")]
+        public AudioClip sonidoAmetralladora;
+        [Tooltip("Se reproduce cada vez que un tanque se desplaza una celda.")]
+        public AudioClip sonidoMovimientoTanque;
+        [Tooltip("Se reproduce al iniciar el barrido de un RADAR.")]
+        public AudioClip sonidoRadar;
+        [Range(0f, 1f)]
+        public float volumenEfectos = 0.7f;
+
+        private int _anchoTablero;
+        private int _altoTablero;
+
+        private AudioSource audioSourceEfectos;
+
+        private void ReproducirEfecto(AudioClip clip)
+        {
+            if (clip == null) return;
+            if (audioSourceEfectos == null)
+            {
+                if (FindObjectOfType<AudioListener>() == null)
+                    gameObject.AddComponent<AudioListener>();
+                audioSourceEfectos = gameObject.AddComponent<AudioSource>();
+                audioSourceEfectos.playOnAwake = false;
+            }
+            audioSourceEfectos.PlayOneShot(clip, volumenEfectos);
+        }
+
         public void Construir(int ancho, int alto)
         {
             Limpiar();
+
+            _anchoTablero = ancho;
+            _altoTablero = alto;
 
             var paleta = ObtenerPaletaBioma();
             CalcularEscala(ancho, alto);
@@ -223,6 +263,7 @@ namespace TanksGame.Visual
             _ladoReferenciaCamara = Mathf.Max(
                 Mathf.Max(tableroReferenciaCamara.x, tableroReferenciaCamara.y) * tamanoCelda, 0.01f);
             _fovReferenciaCamara = camara != null ? camara.fieldOfView : 60f;
+            _orthoSizeReferencia = camara != null ? camara.orthographicSize : 5f;
             _camaraCalibrada = true;
         }
 
@@ -259,16 +300,80 @@ namespace TanksGame.Visual
             float ladoActual = Mathf.Max(ancho, alto) * tamanoCelda;
             float factor = (ladoActual / _ladoReferenciaCamara) * margenExtraCamara;
 
-            objetivo.position = _centroTablero + _offsetCamaraReferencia * factor;
+            // 'correccionCentroCamara' es un ajuste manual, en unidades de
+            // mundo, para el punto que la cámara usa como centro del
+            // tablero. Existe porque la cámara de esta escena no es
+            // necesariamente la que se mueve directamente -- 'objetivo' es
+            // 'objetivoCamaraAlternativo' (el pivote/rig del que cuelga la
+            // Camera real), y forzarle una rotación calculada en código
+            // (recalculando un LookAt hacia el centro exacto en cada ajuste)
+            // resultó en encuadres erráticos, probablemente porque algún
+            // otro componente del rig usa esa rotación para posicionar la
+            // Camera real de una forma que no es un simple "mirar para
+            // allá". Por eso se volvió a la rotación FIJA calibrada
+            // ('_rotacionCamaraReferencia', como estaba en el diseño
+            // original) y en cambio se dejan estos dos offsets a mano para
+            // terminar de centrar el tablero por prueba y error:
+            //
+            //  - 'correccionCentroCamara' se suma tal cual, así que su
+            //    efecto en PANTALLA es más fuerte cuanto más chico es el
+            //    tablero (el mismo desplazamiento en mundo es una fracción
+            //    más grande de una vista con 'orthographicSize' chico).
+            //  - 'correccionCentroCamaraProporcional' se multiplica por
+            //    'factor' (el mismo factor de zoom), así que su efecto en
+            //    PANTALLA queda CONSTANTE sin importar el tamaño del
+            //    tablero.
+            //
+            // Con las dos por separado se puede corregir un corrimiento que
+            // necesita ir para un lado en un tablero chico y para el lado
+            // contrario en uno grande (exactamente lo que pasaba: 3x3 pedía
+            // bajar el tablero, 20x20 pedía subirlo y correrlo a la
+            // derecha): la primera domina en tableros chicos, la segunda
+            // pesa igual en todos.
+            var centroConCorreccion = _centroTablero + correccionCentroCamara
+                + correccionCentroCamaraProporcional * factor;
+
+            objetivo.position = centroConCorreccion + _offsetCamaraReferencia * factor;
             objetivo.rotation = _rotacionCamaraReferencia;
 
-            if (ajustarCampoDeVisionTambien && !camara.orthographic)
+            // Cámara ORTOGRÁFICA (como la de esta escena): reposicionarla no
+            // hace zoom -- en ortográfica el "zoom" lo controla
+            // 'orthographicSize' (la mitad de la altura visible, en unidades
+            // de mundo), no la distancia ni el fieldOfView. El código de acá
+            // abajo (fieldOfView) es exclusivo de cámaras en perspectiva y
+            // antes se saltaba silenciosamente en ortográfica, así que el
+            // tablero nunca se ajustaba pese a que la posición sí cambiaba.
+            // Achicar/agrandar 'orthographicSize' con el mismo factor
+            // proporcional que ya usamos para la posición es exacto (a
+            // diferencia de perspectiva, en ortográfica el tamaño visible
+            // escala linealmente con el tablero, sin trigonometría de por
+            // medio).
+            if (camara.orthographic)
+            {
+                camara.orthographicSize = _orthoSizeReferencia * factor;
+            }
+            else if (ajustarCampoDeVisionTambien)
             {
                 // Radio que hay que encuadrar: la diagonal del tablero más un
                 // colchón para que no quede pegado al borde de pantalla.
-                float radioTablero = Mathf.Sqrt(_mitadAncho * _mitadAncho + _mitadAlto * _mitadAlto)
-                                     + 2.5f * _u;
-                float distanciaCamara = Vector3.Distance(objetivo.position, _centroTablero);
+                //
+                // El colchón es PROPORCIONAL al tablero (35%), no un valor
+                // fijo en unidades de paisaje. Antes era "+2.5f * _u", y _u
+                // deja de achicarse por debajo de cierto tamaño de tablero
+                // (ver el Clamp de 'escalaTablero' en CalcularEscala, para
+                // que árboles/montañas no se vuelvan microscópicos). En un
+                // tablero chico (3x3) ese colchón fijo terminaba siendo
+                // enorme comparado con el radio real del tablero, así que la
+                // fórmula pedía un FOV mucho más ancho del necesario: la
+                // cámara se acercaba, pero al abrir tanto el campo de visión
+                // terminaba encuadrando un montón de paisaje alrededor y el
+                // tablero se veía chico y lejano. Con un colchón proporcional
+                // el encuadre queda igual de ajustado sea cual sea el tamaño
+                // del tablero (a 10x10, el tablero de referencia, el 35% da
+                // prácticamente el mismo resultado que el valor fijo de
+                // antes, así que el encuadre de referencia no cambia).
+                float radioTablero = Mathf.Sqrt(_mitadAncho * _mitadAncho + _mitadAlto * _mitadAlto) * 1.35f;
+                float distanciaCamara = Vector3.Distance(objetivo.position, centroConCorreccion);
                 float fovNecesario = 2f * Mathf.Atan(
                     (radioTablero * margenExtraCamara) / Mathf.Max(distanciaCamara, 0.01f)) * Mathf.Rad2Deg;
 
@@ -631,20 +736,53 @@ namespace TanksGame.Visual
             // costados y en la esquina más alejada de los campamentos, porque el
             // sector frontal era muy estrecho y las distancias de exclusión
             // (montaña/campamento) dejaban demasiado colchón sin árboles.
-            int manchones = Mathf.RoundToInt(100f * densidadBosque);
+            // La cantidad de manchones ahora escala con el perímetro del
+            // tablero (como ya hacían las montañas y los campamentos), en vez
+            // de un número fijo. Con un número fijo, un tablero chico (8x8)
+            // tenía la MISMA cantidad de intentos que un tablero de referencia
+            // 10x10 mientras la franja de bosque disponible es más corta, así
+            // que cada intento descartado (por caer cerca de un campamento o
+            // dentro de una montaña) pesaba mucho más y dejaba huecos visibles
+            // en un flanco. Con esta fórmula un tablero chico simplemente pide
+            // menos manchones en vez de perder más de los que pide.
+            float celdasAncho = 2f * _mitadAncho / Mathf.Max(tamanoCelda, 0.01f);
+            float celdasAlto = 2f * _mitadAlto / Mathf.Max(tamanoCelda, 0.01f);
+            int manchones = Mathf.Clamp(
+                Mathf.RoundToInt((celdasAncho + celdasAlto) * 5f * densidadBosque), 40, 220);
             const int maximoArboles = 700;
+            const int reintentosPorManchon = 6;
             int indice = 0;
 
             float dotMinimo = UmbralFrente - 0.18f;
             float inicioBosque = distanciaEdificios + 0.3f;
+            // Ningún árbol (ni el centro del manchón ni una bala perdida del
+            // borde del manchón) puede caer más cerca del tablero que esto:
+            // es la misma franja despejada que separa el tablero de los
+            // campamentos. Antes solo el CENTRO del manchón respetaba
+            // 'inicioBosque'; el radio del manchón (hasta 3.8) podía superar
+            // ese margen (2.3 con los valores por defecto) y tirar árboles
+            // sueltos dentro de la franja despejada -- el árbol "de más" que
+            // aparece pegado a los campamentos en tableros chicos.
+            float distanciaMinimaAlBorde = _u * (distanciaEdificios + 0.1f);
 
             for (int m = 0; m < manchones && indice < maximoArboles; m++)
             {
-                if (!PuntoAlrededorDelTablero(haciaCamara, dotMinimo, 1f, inicioBosque, inicioBosque + 11f,
-                        rng, out float cx, out float cz))
-                    continue;
-                if (EstaDentroDeMontana(cx, cz, 0.35f * _escalaObjetos)) continue;
-                if (EstaCercaDeCampamento(cx, cz, 1.5f * _escalaObjetos)) continue;
+                float cx = 0f, cz = 0f;
+                bool centroValido = false;
+
+                for (int intento = 0; intento < reintentosPorManchon; intento++)
+                {
+                    if (!PuntoAlrededorDelTablero(haciaCamara, dotMinimo, 1f, inicioBosque, inicioBosque + 11f,
+                            rng, out cx, out cz))
+                        continue;
+                    if (EstaDentroDeMontana(cx, cz, 0.35f * _escalaObjetos)) continue;
+                    if (EstaCercaDeCampamento(cx, cz, 1.5f * _escalaObjetos)) continue;
+
+                    centroValido = true;
+                    break;
+                }
+
+                if (!centroValido) continue;
 
                 // Manchones más grandes y más poblados, y con menos separación
                 // entre sí (el rango de offset de arriba es más corto): así las
@@ -663,6 +801,13 @@ namespace TanksGame.Visual
 
                     if (EstaDentroDeMontana(px, pz, 0.15f * _escalaObjetos)) continue;
                     if (EstaCercaDeCampamento(px, pz, 1.5f * _escalaObjetos)) continue;
+
+                    var direccionPunto = new Vector3(px, 0f, pz) - _centroTablero;
+                    if (direccionPunto.sqrMagnitude > 0.0001f)
+                    {
+                        float bordePunto = DistanciaCentroABorde(direccionPunto.normalized, _mitadAncho, _mitadAlto);
+                        if (direccionPunto.magnitude - bordePunto < distanciaMinimaAlBorde) continue;
+                    }
 
                     var follaje = Color.Lerp(follajeOscuro, follajeClaro, (float)rng.NextDouble());
                     if (tonoManchon > 0.8f) follaje = Color.Lerp(follaje, follajeOtono, 0.5f);
@@ -1582,10 +1727,13 @@ namespace TanksGame.Visual
                     AsentarSobreCelda(visual);
                 }
 
-                visual.gameObject.SetActive(vivo);
-                if (!vivo) continue;
-
+                // Un tanque destruido ya NO se oculta (SetActive(false)): queda su
+                // chatarra visible en el tablero (volcada y ennegrecida, ver
+                // AplicarEstadoDeDano con vidaPorcentaje 0), igual que ocupa la
+                // celda como obstáculo en la lógica de juego.
+                visual.gameObject.SetActive(true);
                 AplicarEstadoDeDano(visual, vidaPorcentaje);
+                if (!vivo) continue; // no se anima más movimiento sobre una chatarra
 
                 var destino = CeldaAPosicionMundo(posicion.x, posicion.y);
                 if (Vector3.Distance(new Vector3(visual.localPosition.x, 0f, visual.localPosition.z),
@@ -1727,6 +1875,8 @@ namespace TanksGame.Visual
         {
             Vector3 origen = visual.localPosition;
             Vector3 direccionMovimiento = destinoLocal - origen;
+
+            ReproducirEfecto(sonidoMovimientoTanque);
 
             // Antes la rotación se fijaba de golpe (LookRotation) en el primer
             // frame del movimiento: un giro instantáneo de cualquier ángulo, por
@@ -1919,6 +2069,7 @@ namespace TanksGame.Visual
             public bool SeMovio;
             public Vector2Int Destino;
             public ShotEvent Disparo; // null si ese tanque no disparó esta ronda
+            public RadarEvent Radar;  // null si ese tanque no usó RADAR esta ronda
         }
 
         // Espejo visual de Gameplay.DamageEvent: mina, choque o desgaste.
@@ -1926,6 +2077,7 @@ namespace TanksGame.Visual
         {
             public DamageEventType Tipo;
             public Vector2Int Celda;
+            public Vector2Int? CeldaB;
             public List<int> TargetIds;
             public Dictionary<int, int> VidaPorcentajeDespuesPorId;
             public HashSet<int> DestruidosIds;
@@ -1955,6 +2107,9 @@ namespace TanksGame.Visual
 
                 if (paso.Disparo != null)
                     yield return ReproducirUnDisparo(paso.Disparo);
+
+                if (paso.Radar != null)
+                    yield return ReproducirRadar(paso.Radar);
             }
 
             if (eventos != null)
@@ -1971,16 +2126,43 @@ namespace TanksGame.Visual
         private System.Collections.IEnumerator ReproducirEventoDeDano(EventoDanoVisual evento)
         {
             float alturaExplosion = 0.4f * _escalaObjetos;
-            Vector3 puntoMundo = PuntoDeFuegoEnCelda(evento.Celda.x, evento.Celda.y, alturaExplosion);
+            // Choque entre dos tanques: la explosión va justo a mitad de
+            // camino entre las dos celdas (en espacio de mundo, no de
+            // grilla, para que quede centrada incluso si el tablero no es
+            // cuadrado). El resto de los casos (obstáculo, mina, desgaste)
+            // no tiene CeldaB y usa la celda única de siempre.
+            Vector3 puntoMundo = evento.CeldaB.HasValue
+                ? Vector3.Lerp(
+                    PuntoDeFuegoEnCelda(evento.Celda.x, evento.Celda.y, alturaExplosion),
+                    PuntoDeFuegoEnCelda(evento.CeldaB.Value.x, evento.CeldaB.Value.y, alturaExplosion),
+                    0.5f)
+                : PuntoDeFuegoEnCelda(evento.Celda.x, evento.Celda.y, alturaExplosion);
 
             switch (evento.Tipo)
             {
                 case DamageEventType.Mina:
+                    ReproducirEfecto(sonidoExplosionMina);
                     yield return Explosion(puntoMundo, 0.9f);
                     break;
                 case DamageEventType.Choque:
+                {
+                    // El "rebote" es el mismo golpecito que usa Desgaste
+                    // (SacudirTanque), pero acá se dispara para CADA tanque
+                    // involucrado -- uno solo si chocó contra un obstáculo,
+                    // los dos si chocaron entre sí -- y en paralelo con la
+                    // explosión, para que se sienta como un impacto real y
+                    // no como dos animaciones sueltas.
+                    var rutinasRebote = new List<Coroutine>();
+                    foreach (var id in evento.TargetIds)
+                        if (tanquesVisuales.TryGetValue(id, out var visualChoque) && visualChoque != null)
+                            rutinasRebote.Add(StartCoroutine(SacudirTanque(visualChoque)));
+
                     yield return Explosion(puntoMundo, 1.0f);
+
+                    foreach (var rutina in rutinasRebote)
+                        yield return rutina;
                     break;
+                }
                 case DamageEventType.Desgaste:
                     // Sin explosión (no hay proyectil ni detonación real):
                     // una sacudida breve del propio tanque contra el
@@ -1996,7 +2178,7 @@ namespace TanksGame.Visual
                 if (!tanquesVisuales.TryGetValue(id, out var visualObjetivo) || visualObjetivo == null) continue;
 
                 if (evento.DestruidosIds.Contains(id))
-                    visualObjetivo.gameObject.SetActive(false);
+                    AplicarEstadoDeDano(visualObjetivo, 0); // queda la chatarra, no se oculta
                 else if (evento.VidaPorcentajeDespuesPorId.TryGetValue(id, out var vidaDespues))
                     AplicarEstadoDeDano(visualObjetivo, vidaDespues);
             }
@@ -2057,11 +2239,19 @@ namespace TanksGame.Visual
             // ráfaga real de varias balas pequeñas y rápidas en sucesión,
             // como una ametralladora.
             if (disparo.EsMisil)
+            {
                 yield return VueloDeMisil(origen, destino);
+                ReproducirEfecto(sonidoImpactoMisil);
+                yield return Explosion(destino, 1.3f);
+            }
             else
+            {
+                // El AMT no termina en una explosión grande: cada bala ya
+                // deja su propia chispa de impacto (ver VolarBala). Poner
+                // además la Explosion() grande acá es lo que hacía que la
+                // ráfaga se confundiera visualmente con el misil.
                 yield return RafagaDeAmt(origen, destino);
-
-            yield return Explosion(destino, disparo.EsMisil ? 1.3f : 0.6f);
+            }
 
             // Recién ahora, con la explosión ya en pantalla, se actualiza la
             // apariencia del tanque golpeado (chapa quemada/humo, o volcado
@@ -2072,10 +2262,106 @@ namespace TanksGame.Visual
                 && visualObjetivo != null)
             {
                 if (disparo.TargetDestruido)
-                    visualObjetivo.gameObject.SetActive(false);
+                    AplicarEstadoDeDano(visualObjetivo, 0); // queda la chatarra, no se oculta
                 else
                     AplicarEstadoDeDano(visualObjetivo, disparo.TargetVidaPorcentajeDespues);
             }
+        }
+
+        // ---------------------------------------------------------------------
+        // RADAR: barrido visual en la dirección consultada, desde el tanque
+        // hasta el borde del tablero en esa línea, con un sonido de escaneo.
+        // No afecta al resultado del RADAR (ya calculado en TurnManager);
+        // es puramente la animación de "algo escaneando hacia allá".
+        // ---------------------------------------------------------------------
+        private System.Collections.IEnumerator ReproducirRadar(RadarEvent radar)
+        {
+            float alturaHaz = 0.5f * _escalaObjetos;
+            Vector3 origen = tanquesVisuales.TryGetValue(radar.ShooterId, out var visualOrigen) && visualOrigen != null
+                ? visualOrigen.position + Vector3.up * alturaHaz
+                : PuntoDeFuegoEnCelda(radar.Origin.x, radar.Origin.y, alturaHaz);
+
+            var celdaBorde = CeldaHastaElBorde(radar.Origin, radar.Dir);
+            Vector3 destino = PuntoDeFuegoEnCelda(celdaBorde.x, celdaBorde.y, alturaHaz);
+
+            // El tanque gira para encarar la dirección del escaneo antes de
+            // que salga el haz, igual que con los disparos.
+            if (visualOrigen != null)
+                yield return GirarTanqueHaciaDisparo(visualOrigen, destino);
+
+            ReproducirEfecto(sonidoRadar);
+            yield return EscaneoDeRadar(origen, destino);
+        }
+
+        // Última celda DENTRO del tablero en línea recta desde 'origen' hacia
+        // 'dir', para que el barrido llegue justo hasta el borde del tablero.
+        private Vector2Int CeldaHastaElBorde(Vector2Int origen, Direction dir)
+        {
+            var offset = dir.ToOffset();
+            var celda = origen;
+            while (true)
+            {
+                var siguiente = celda + offset;
+                if (siguiente.x < 0 || siguiente.x >= _anchoTablero || siguiente.y < 0 || siguiente.y >= _altoTablero)
+                    break;
+                celda = siguiente;
+            }
+            return celda;
+        }
+
+        // Haz delgado que "crece" desde el tanque hasta el borde del tablero
+        // (el barrido en sí) y luego se desvanece rápido -- como un pulso de
+        // radar viajando en la dirección consultada.
+        private System.Collections.IEnumerator EscaneoDeRadar(Vector3 origen, Vector3 destino)
+        {
+            const float duracionBarrido = 0.35f;
+            const float duracionDesvanecido = 0.18f;
+            float grosor = 0.1f * _escalaObjetos;
+            var colorRadar = new Color(0.25f, 1f, 0.55f);
+
+            var direccion = destino - origen;
+            float distanciaTotal = direccion.magnitude;
+            if (distanciaTotal < 0.0001f) yield break;
+            var direccionNormalizada = direccion / distanciaTotal;
+
+            var hazGo = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            hazGo.transform.SetParent(transform, true);
+            var colliderHaz = hazGo.GetComponent<Collider>();
+            if (colliderHaz != null) Destroy(colliderHaz);
+            var rendererHaz = hazGo.GetComponent<Renderer>();
+            var materialHaz = new Material(ObtenerShaderEstandar()) { color = colorRadar };
+            if (rendererHaz != null) rendererHaz.material = materialHaz;
+            hazGo.transform.rotation = Quaternion.LookRotation(direccionNormalizada, Vector3.up);
+
+            // El cubo crece a lo largo de su eje hacia adelante desde 0 hasta
+            // la distancia total; como el pivote queda en su centro, hay que
+            // reubicarlo cada frame a mitad de su largo actual para que el
+            // extremo trasero se quede clavado en el origen (el barrido
+            // "avanza" en vez de estirarse desde el medio para los dos lados).
+            float tiempo = 0f;
+            while (tiempo < duracionBarrido)
+            {
+                tiempo += Time.deltaTime;
+                float t = Mathf.Clamp01(tiempo / duracionBarrido);
+                float largoActual = distanciaTotal * t;
+                hazGo.transform.localScale = new Vector3(grosor, grosor, largoActual);
+                hazGo.transform.position = origen + direccionNormalizada * (largoActual * 0.5f);
+                yield return null;
+            }
+
+            hazGo.transform.localScale = new Vector3(grosor, grosor, distanciaTotal);
+            hazGo.transform.position = origen + direccionNormalizada * (distanciaTotal * 0.5f);
+
+            float tiempoDesvanecido = 0f;
+            while (tiempoDesvanecido < duracionDesvanecido)
+            {
+                tiempoDesvanecido += Time.deltaTime;
+                float alfa = 1f - Mathf.Clamp01(tiempoDesvanecido / duracionDesvanecido);
+                materialHaz.color = new Color(colorRadar.r, colorRadar.g, colorRadar.b, alfa);
+                yield return null;
+            }
+
+            Destroy(hazGo);
         }
 
         // Vuelo del MISIL: una sola cápsula grande, lenta, con estela larga
@@ -2130,26 +2416,57 @@ namespace TanksGame.Visual
             const float duracionPorBala = 0.08f;
             const float espacioEntreBalas = 0.035f;
 
+            ReproducirEfecto(sonidoAmetralladora);
+
+            // Dispersión: sin esto todas las balas viajan exactamente por la
+            // misma línea y se ven como una sola raya continua (fácil de
+            // confundir con el misil). Cada bala se desvía un poco al azar,
+            // en el plano perpendicular a la trayectoria, tanto al salir del
+            // cañón como al llegar al blanco -- como una ráfaga real.
+            const float dispersionSalida = 0.06f;
+            const float dispersionLlegada = 0.16f;
+
             var direccionVuelo = (destino - origen);
-            var rotacionVuelo = direccionVuelo.sqrMagnitude > 0.0001f
-                ? Quaternion.LookRotation(direccionVuelo.normalized, Vector3.up) * Quaternion.Euler(90f, 0f, 0f)
-                : Quaternion.identity;
+            var direccionNormalizada = direccionVuelo.sqrMagnitude > 0.0001f
+                ? direccionVuelo.normalized
+                : Vector3.forward;
+            var rotacionVuelo = Quaternion.LookRotation(direccionNormalizada, Vector3.up) * Quaternion.Euler(90f, 0f, 0f);
+
+            // Base perpendicular a la dirección de disparo (horizontal y
+            // vertical relativas a esa dirección), para dispersar las balas
+            // en un pequeño cono en vez de en línea recta.
+            var lateral = Vector3.Cross(Vector3.up, direccionNormalizada);
+            if (lateral.sqrMagnitude < 0.0001f) lateral = Vector3.right;
+            lateral.Normalize();
+            var vertical = Vector3.Cross(direccionNormalizada, lateral).normalized;
 
             for (int i = 0; i < numeroDeBalas; i++)
             {
-                StartCoroutine(VolarBala(origen, destino, rotacionVuelo, duracionPorBala));
+                Vector2 desvioSalida = UnityEngine.Random.insideUnitCircle * dispersionSalida;
+                Vector2 desvioLlegada = UnityEngine.Random.insideUnitCircle * dispersionLlegada;
+
+                var origenBala = origen + lateral * desvioSalida.x + vertical * desvioSalida.y;
+                var destinoBala = destino + lateral * desvioLlegada.x + vertical * desvioLlegada.y;
+
+                var direccionBala = destinoBala - origenBala;
+                var rotacionBala = direccionBala.sqrMagnitude > 0.0001f
+                    ? Quaternion.LookRotation(direccionBala.normalized, Vector3.up) * Quaternion.Euler(90f, 0f, 0f)
+                    : rotacionVuelo;
+
+                StartCoroutine(VolarBala(origenBala, destinoBala, rotacionBala, duracionPorBala));
                 yield return new WaitForSeconds(espacioEntreBalas);
             }
 
             // Espera a que la última bala termine de volar antes de que
-            // ReproducirUnDisparo dispare la explosión final del impacto.
+            // ReproducirUnDisparo siga con el siguiente paso.
             yield return new WaitForSeconds(duracionPorBala);
         }
 
         // Una sola bala de la ráfaga de AMT: mucho más chica y rápida que el
-        // MISIL, con una estela cortita y una chispa de impacto pequeña (la
-        // explosión grande del impacto la pone ReproducirUnDisparo una sola
-        // vez, al final de toda la ráfaga).
+        // MISIL, con una estela cortita y una chispa de impacto pequeña.
+        // Cada bala recibe su propio origen/destino, ligeramente distintos
+        // entre sí (ver RafagaDeAmt), para que la ráfaga se vea dispersa en
+        // vez de como una sola línea recta.
         private System.Collections.IEnumerator VolarBala(Vector3 origen, Vector3 destino, Quaternion rotacion, float duracion)
         {
             const float grosor = 0.028f;

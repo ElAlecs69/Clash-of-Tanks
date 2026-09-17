@@ -12,6 +12,12 @@ namespace TanksGame.Core
         public readonly int Height;
         private readonly BoardCell[,] cells;
 
+        // Contador de ronda propio del tablero: arranca en 0 y sube en 1 cada
+        // vez que se llama a AvanzarRonda() (una vez por ronda, al empezarla).
+        // Es la base del sistema de minas: una mina queda "armada" recién
+        // cuando rondaActual sea MAYOR que la ronda en la que se colocó.
+        private int rondaActual = 0;
+
         public GridBoard(int width = 8, int height = 8)
         {
             Width = width;
@@ -48,24 +54,26 @@ namespace TanksGame.Core
         {
             if (!IsInside(pos)) return;
             cells[pos.x, pos.y].Type = CellType.Mine;
-            // Desarmada al colocarla: no puede detonar en esta misma ronda.
-            cells[pos.x, pos.y].MinaArmada = false;
+            // Queda "sellada" con el número de la ronda actual: no importa en
+            // qué momento de ExecuteRound() se llame a esto (antes o después
+            // de AvanzarRonda), la mina solo se arma a partir de la PRÓXIMA
+            // vez que rondaActual avance más allá de este número.
+            cells[pos.x, pos.y].RondaColocacion = rondaActual;
         }
 
-        // Arma todas las minas que ya existían de rondas anteriores (las
-        // recién colocadas en la ronda actual todavía no pasaron por aquí,
-        // así que siguen desarmadas hasta la ronda siguiente). Llamar UNA vez
-        // al principio de cada ronda, antes de ejecutar las instrucciones.
-        public void ArmarMinasPendientes()
-        {
-            for (int x = 0; x < Width; x++)
-                for (int y = 0; y < Height; y++)
-                    if (cells[x, y].Type == CellType.Mine)
-                        cells[x, y].MinaArmada = true;
-        }
+        // Avanza el contador de ronda del tablero. TurnManager la llama UNA
+        // vez al empezar cada ExecuteRound(). A diferencia del viejo
+        // ArmarMinasPendientes() (que tenía que "acordarse" de recorrer y
+        // armar cada mina existente, y solo funcionaba si se llamaba justo
+        // antes de ejecutar las instrucciones), esto es solo un contador: la
+        // condición de armado se recalcula sola en IsMineArmed/TryConsumeMine
+        // comparando contra RondaColocacion, así que no depende de en qué
+        // orden exacto se llamen las cosas dentro de la ronda.
+        public void AvanzarRonda() => rondaActual++;
 
         public bool IsMineArmed(Vector2Int pos) =>
-            IsInside(pos) && cells[pos.x, pos.y].Type == CellType.Mine && cells[pos.x, pos.y].MinaArmada;
+            IsInside(pos) && cells[pos.x, pos.y].Type == CellType.Mine
+            && rondaActual > cells[pos.x, pos.y].RondaColocacion;
 
         // Si hay una mina ARMADA en 'pos', la retira y devuelve true (para
         // aplicar daño). Una mina desarmada (recién colocada esta misma
@@ -73,10 +81,11 @@ namespace TanksGame.Core
         public bool TryConsumeMine(Vector2Int pos)
         {
             if (!IsInside(pos)) return false;
-            if (cells[pos.x, pos.y].Type == CellType.Mine && cells[pos.x, pos.y].MinaArmada)
+            if (cells[pos.x, pos.y].Type == CellType.Mine
+                && rondaActual > cells[pos.x, pos.y].RondaColocacion)
             {
                 cells[pos.x, pos.y].Type = CellType.Free;
-                cells[pos.x, pos.y].MinaArmada = false;
+                cells[pos.x, pos.y].RondaColocacion = -1;
                 return true;
             }
             return false;
