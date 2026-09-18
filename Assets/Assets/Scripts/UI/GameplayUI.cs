@@ -213,7 +213,7 @@ namespace TanksGame.UI
         // Usa el GameResult real que ya calcula TurnManager (PlayerWins / Draw /
         // en progreso) en vez de aproximarlo contando tanques vivos nosotros mismos
         // — así respeta las reglas de desempate por daño que ya tiene tu lógica de
-        // turnos, en vez de reinventarlas acá.
+        // turnos, en vez de reinventarlas aquí.
         private void RevisarFinDePartida(GameResult resultado)
         {
             if (resultado == GameResult.PlayerWins)

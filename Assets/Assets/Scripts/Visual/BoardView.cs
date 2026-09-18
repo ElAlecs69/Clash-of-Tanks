@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using TanksGame.Core;
 using TanksGame.Gameplay;
 
@@ -75,6 +76,14 @@ namespace TanksGame.Visual
         [Tooltip("Ajuste de rotación si el prefab no mira hacia +Z por defecto: gíralo hasta que el morro apunte en la dirección de vuelo.")]
         public Vector3 rotacionExtraAvion = Vector3.zero;
 
+        [Header("Posición del tablero según su tamaño (interpolada)")]
+        [Tooltip("Mueve este mismo GameObject (BoardView), del que cuelgan terreno, tablero y tanques, en vez de tocar la cámara. Se interpola linealmente entre 'Posicion Para Lado Chico' y 'Posicion Para Lado Grande' según el lado más largo del tablero actual (Max(ancho, alto)); fuera de ese rango, extrapola con la misma recta. Calibralo jugando con dos tamaños de tablero bien distintos (por ejemplo 3x3 y 20x20), moviendo este GameObject a mano hasta que cada uno se vea bien, anotando la Position de cada caso y pasándola aquí.")]
+        public bool ajustarPosicionTableroSegunTamano = true;
+        public int ladoReferenciaChico = 3;
+        public Vector3 posicionParaLadoChico = new Vector3(-0.25f, -0.1f, 1f);
+        public int ladoReferenciaGrande = 20;
+        public Vector3 posicionParaLadoGrande = new Vector3(-0.94f, 0f, 4.25f);
+
         [Header("Cámara (encuadre automático según el tamaño del tablero)")]
         [Tooltip("Aleja o acerca la cámara según crece el tablero, conservando el mismo ángulo con el que la dejaste colocada en la escena. Se calibra sola la primera vez que se construye un tablero, tomando la posición y rotación que la cámara tenga en ese momento como referencia para 'Tablero Referencia Camara'.")]
         public bool ajustarCamaraAutomaticamente = true;
@@ -84,7 +93,7 @@ namespace TanksGame.Visual
         [Range(0.5f, 2f)] public float margenExtraCamara = 1f;
         [Tooltip("Ajuste manual, en unidades de mundo, para terminar de centrar el tablero en pantalla si el encuadre automático queda un poco corrido. X mueve el punto de mira a la izquierda/derecha, Z arriba/abajo en pantalla (según el ángulo de la cámara). Su efecto es MÁS FUERTE cuanto más chico es el tablero (a igual valor, en un 3x3 se nota mucho más que en un 20x20), así que ajustalo probando con un tablero chico (por ejemplo 3x3).")]
         public Vector3 correccionCentroCamara = Vector3.zero;
-        [Tooltip("Segundo ajuste manual, también en unidades de mundo, pero con efecto CONSTANTE en pantalla sin importar el tamaño del tablero (a diferencia de 'Correccion Centro Camara', que pesa más en tableros chicos). Usalo para corregir un corrimiento que se nota igual de fuerte en 3x3 y en 20x20 -- por ejemplo si necesitás mover el tablero para un lado en un tamaño chico y para el lado contrario en uno grande: primero ajustá 'Correccion Centro Camara' mirando un tablero chico, y después este otro mirando uno grande, sin que se te desarme el chico.")]
+        [Tooltip("Segundo ajuste manual, también en unidades de mundo, pero con efecto CONSTANTE en pantalla sin importar el tamaño del tablero (a diferencia de 'Correccion Centro Camara', que pesa más en tableros chicos). Úsalo para corregir un corrimiento que se nota igual de fuerte en 3x3 y en 20x20 -- por ejemplo si necesitas mover el tablero para un lado en un tamaño chico y para el lado contrario en uno grande: primero ajusta 'Correccion Centro Camara' mirando un tablero chico, y después este otro mirando uno grande, sin que se te desarme el chico.")]
         public Vector3 correccionCentroCamaraProporcional = Vector3.zero;
         [Tooltip("Opcional: si la cámara sigue a un objeto (por ejemplo un 'CameraTarget' del que cuelga un script de seguimiento) en vez de moverse directamente, asigna aquí ese objeto para que el ajuste se aplique a él en lugar de a la cámara.")]
         public Transform objetivoCamaraAlternativo;
@@ -122,9 +131,15 @@ namespace TanksGame.Visual
         private bool _camaraCalibrada;
         private Vector3 _offsetCamaraReferencia;
         private Quaternion _rotacionCamaraReferencia;
-        private float _ladoReferenciaCamara = 10f;
-        private float _fovReferenciaCamara = 60f;
+        private float _ladoReferenciaCamara = 10f;        private float _fovReferenciaCamara = 60f;
         private float _orthoSizeReferencia = 5f;
+
+        // Límites de la cámara libre (paneo + zoom manual del jugador, ver
+        // Update()/ActualizarCamaraLibre): se recalculan cada vez que se
+        // construye el tablero, en ConfigurarLimitesCamaraLibre().
+        private float _panLimiteRadio;
+        private float _zoomOrthoMinLimite;
+        private float _zoomOrthoMaxLimite;
 
         private float superficieCeldaMundoY;
         private bool superficieCalculada;
@@ -220,7 +235,9 @@ namespace TanksGame.Visual
             ConstruirCeldas(ancho, alto, paleta.celda);
             ConstruirCampamentos();
             AplicarAmbienteBioma(paleta.niebla);
+            AjustarPosicionSegunTamano(ancho, alto);
             AjustarCamaraAlTablero(ancho, alto);
+            ConfigurarLimitesCamaraLibre();
 
             if (avionDecorativo)
             {
@@ -250,6 +267,31 @@ namespace TanksGame.Visual
         // referencia "correcta" para el tamaño de tablero indicado en
         // 'tableroReferenciaCamara'. Todo ajuste posterior escala esa misma
         // relación en vez de recalcular el encuadre desde cero.
+        // Reposiciona este mismo GameObject (con todo lo que cuelga de él:
+        // terreno, celdas, tanques) según el tamaño del tablero, interpolando
+        // linealmente entre las dos posiciones calibradas a mano
+        // ('posicionParaLadoChico' / 'posicionParaLadoGrande'). Usa el lado
+        // más largo del tablero (Max(ancho, alto)) como parámetro de la
+        // recta, igual que el resto de los cálculos de escala/cámara de este
+        // componente. Fuera del rango [ladoReferenciaChico, ladoReferenciaGrande]
+        // extrapola con la misma recta en vez de recortar, para que tableros
+        // más chicos o más grandes que los dos de referencia sigan
+        // corrigiéndose en la misma dirección en vez de quedarse pegados al
+        // valor del extremo más cercano.
+        private void AjustarPosicionSegunTamano(int ancho, int alto)
+        {
+            if (!ajustarPosicionTableroSegunTamano) return;
+
+            int ladoActual = Mathf.Max(ancho, alto);
+            int rango = ladoReferenciaGrande - ladoReferenciaChico;
+
+            float t = rango != 0
+                ? (float)(ladoActual - ladoReferenciaChico) / rango
+                : 0f;
+
+            transform.position = Vector3.LerpUnclamped(posicionParaLadoChico, posicionParaLadoGrande, t);
+        }
+
         private void CalibrarCamaraSiHaceFalta(Camera camara, Transform objetivo)
         {
             if (_camaraCalibrada) return;
@@ -295,6 +337,7 @@ namespace TanksGame.Visual
                 return;
             }
 
+
             CalibrarCamaraSiHaceFalta(camara, objetivo);
 
             float ladoActual = Mathf.Max(ancho, alto) * tamanoCelda;
@@ -339,7 +382,7 @@ namespace TanksGame.Visual
             // Cámara ORTOGRÁFICA (como la de esta escena): reposicionarla no
             // hace zoom -- en ortográfica el "zoom" lo controla
             // 'orthographicSize' (la mitad de la altura visible, en unidades
-            // de mundo), no la distancia ni el fieldOfView. El código de acá
+            // de mundo), no la distancia ni el fieldOfView. El código de aquí
             // abajo (fieldOfView) es exclusivo de cámaras en perspectiva y
             // antes se saltaba silenciosamente en ortográfica, así que el
             // tablero nunca se ajustaba pese a que la posición sí cambiaba.
@@ -382,6 +425,95 @@ namespace TanksGame.Visual
                 // abre más cuando el tablero real es más grande que esa
                 // referencia.
                 camara.fieldOfView = Mathf.Clamp(fovNecesario, _fovReferenciaCamara, 100f);
+            }
+        }
+
+        // Recalcula, cada vez que se construye/reconstruye el tablero, hasta
+        // dónde puede moverse la cámara libre del jugador (ver
+        // ActualizarCamaraLibre): un radio de paneo alrededor del centro del
+        // tablero que se queda antes del anillo de árboles/montañas (que
+        // arranca en ~1.35x la diagonal del tablero, ver 'radioTablero' más
+        // arriba), y los mismos dos extremos de zoom (orthographicSize) que ya
+        // usa el encuadre automático para tableros de 3x3 (más cerca) y 20x20
+        // (más lejos), para no inventar límites nuevos.
+        private void ConfigurarLimitesCamaraLibre()
+        {
+            _panLimiteRadio = Mathf.Sqrt(_mitadAncho * _mitadAncho + _mitadAlto * _mitadAlto) * 1.1f;
+
+            float factorCercano = (3f * tamanoCelda / _ladoReferenciaCamara) * margenExtraCamara;
+            float factorLejano = (20f * tamanoCelda / _ladoReferenciaCamara) * margenExtraCamara;
+            _zoomOrthoMinLimite = _orthoSizeReferencia * factorCercano;
+            _zoomOrthoMaxLimite = _orthoSizeReferencia * factorLejano;
+        }
+
+        // Paneo (arrastrar con el botón central del mouse) + zoom (rueda) de la
+        // cámara del jugador. El encuadre automático (AjustarCamaraAlTablero)
+        // sigue fijando la posición/zoom INICIAL cada vez que se arma el
+        // tablero; esto solo se agrega encima para poder moverse libremente
+        // durante la partida, sin salirse del anillo de árboles/montañas
+        // (_panLimiteRadio) ni de los extremos de zoom ya validados
+        // (_zoomOrthoMinLimite/_zoomOrthoMaxLimite).
+        private void Update()
+        {
+            ActualizarCamaraLibre();
+        }
+
+        private void ActualizarCamaraLibre()
+        {
+            if (!ajustarCamaraAutomaticamente) return;
+
+            var camara = camaraJuego != null ? camaraJuego : Camera.main;
+            var objetivo = objetivoCamaraAlternativo != null ? objetivoCamaraAlternativo
+                : (camara != null ? camara.transform : null);
+            if (camara == null || objetivo == null) return;
+
+            var mouse = Mouse.current;
+            if (mouse == null) return;
+
+            if (camara.orthographic)
+            {
+                float scroll = mouse.scroll.ReadValue().y;
+                if (Mathf.Abs(scroll) > 0.001f)
+                {
+                    camara.orthographicSize = Mathf.Clamp(
+                        camara.orthographicSize - scroll * 0.01f,
+                        _zoomOrthoMinLimite, _zoomOrthoMaxLimite);
+                }
+            }
+
+            // Botón central para no pisar el click izquierdo (UI/selección) ni
+            // un eventual click derecho de otra acción.
+            if (mouse.middleButton.isPressed)
+            {
+                var delta = mouse.delta.ReadValue();
+                if (delta.sqrMagnitude > 0.0001f)
+                {
+                    Vector3 derecha = objetivo.right; derecha.y = 0f; derecha.Normalize();
+                    Vector3 adelante = objetivo.forward; adelante.y = 0f; adelante.Normalize();
+
+                    // La velocidad escala con el zoom actual: paneás más rápido
+                    // (en unidades de mundo) cuando estás más alejado, como se
+                    // espera de una cámara así.
+                    float velocidad = camara.orthographicSize * 0.0025f;
+                    Vector3 desplazamiento = (-derecha * delta.x - adelante * delta.y) * velocidad;
+
+                    Vector3 nuevaPosicion = objetivo.position + desplazamiento;
+                    ClamparDentroDeLimitesDePaneo(ref nuevaPosicion);
+                    objetivo.position = nuevaPosicion;
+                }
+            }
+        }
+
+        private void ClamparDentroDeLimitesDePaneo(ref Vector3 posicion)
+        {
+            float dx = posicion.x - _centroTablero.x;
+            float dz = posicion.z - _centroTablero.z;
+            float distancia = Mathf.Sqrt(dx * dx + dz * dz);
+            if (distancia > _panLimiteRadio && distancia > 0.0001f)
+            {
+                float escala = _panLimiteRadio / distancia;
+                posicion.x = _centroTablero.x + dx * escala;
+                posicion.z = _centroTablero.z + dz * escala;
             }
         }
 
@@ -1716,7 +1848,10 @@ namespace TanksGame.Visual
                             renderer.material.color = Color.white;
                         }
 
-                        CrearEtiquetaFlotante(go.transform, skin);
+                        // La cápsula de respaldo usa el tamaño de referencia
+                        // (0.6 x 1 x 0.6) para el que están pensadas las medidas
+                        // fijas de ObtenerBoundsVisual, así que factor sale en 1.
+                        CrearEtiquetaFlotante(go.transform, skin, new Bounds(new Vector3(0f, 0.5f, 0f), new Vector3(0.6f, 1f, 0.6f)));
                     }
 
                     go.name = $"Tanque_Jugador{playerId}";
@@ -1844,31 +1979,217 @@ namespace TanksGame.Visual
                 }
             }
 
-            CrearEtiquetaFlotante(raiz.transform, skin);
+            // El asta/bandera y el número se dimensionaban antes con números fijos
+            // pensados para un tanque de ~1 unidad de alto. El modelo real
+            // (tanquePrefab, ej. el pack Military_Free) puede ser bastante más
+            // grande o más chico que eso, así que con tamaño fijo terminaban
+            // invisibles o enterrados dentro del propio modelo. Ahora se calculan
+            // a partir del tamaño real del modelo, medido en su propio espacio
+            // LOCAL (ver ObtenerBoundsLocal) -- si se midiera en espacio mundo
+            // (Renderer.bounds tal cual) y el contenedor tuviera alguna escala,
+            // las unidades no coincidirían con las de localPosition/localScale de
+            // abajo y el asta terminaría mal ubicada de nuevo.
+            var bounds = ObtenerBoundsLocal(raiz);
+            CrearEtiquetaFlotante(raiz.transform, skin, bounds);
         }
 
-        private void CrearEtiquetaFlotante(Transform padreTanque, TanqueSkinDatos skin)
+        // Calcula los bounds del modelo en el espacio LOCAL de "raiz" (no en
+        // espacio mundo), combinando los bounds de cada malla ya transformados
+        // por su matriz local respecto a raiz. Así el resultado se puede usar
+        // directamente para posicionar/escalar objetos hijos de raiz.transform,
+        // sin importar la escala que tenga raiz o sus padres en la jerarquía.
+        private Bounds ObtenerBoundsLocal(GameObject raiz)
         {
+            var filtros = raiz.GetComponentsInChildren<MeshFilter>();
+            bool huboAlguno = false;
+            Bounds resultado = new Bounds(Vector3.zero, Vector3.zero);
+
+            foreach (var filtro in filtros)
+            {
+                if (filtro.sharedMesh == null) continue;
+                var mb = filtro.sharedMesh.bounds;
+                Vector3 c = mb.center, e = mb.extents;
+
+                for (int sx = -1; sx <= 1; sx += 2)
+                for (int sy = -1; sy <= 1; sy += 2)
+                for (int sz = -1; sz <= 1; sz += 2)
+                {
+                    Vector3 esquinaMundo = filtro.transform.TransformPoint(c + new Vector3(sx * e.x, sy * e.y, sz * e.z));
+                    Vector3 esquinaLocal = raiz.transform.InverseTransformPoint(esquinaMundo);
+                    if (!huboAlguno) { resultado = new Bounds(esquinaLocal, Vector3.zero); huboAlguno = true; }
+                    else resultado.Encapsulate(esquinaLocal);
+                }
+            }
+
+            return huboAlguno ? resultado : new Bounds(new Vector3(0f, 0.5f, 0f), new Vector3(0.6f, 1f, 0.6f));
+        }
+
+        private void CrearEtiquetaFlotante(Transform padreTanque, TanqueSkinDatos skin, Bounds bounds)
+        {
+            // "factor" reescala todas las medidas fijas de abajo (pensadas para un
+            // tanque de referencia de 0.6 unidades de ancho) al tamaño real del
+            // modelo. "alturaTope" es la altura local (relativa al pivote del
+            // tanque) del punto más alto del modelo -- ya no se asume que el
+            // pivote está en la base: si estuviera centrado, bounds.max.y ya lo
+            // resuelve solo.
+            float factor = Mathf.Clamp(Mathf.Max(bounds.size.x, bounds.size.z) / 0.6f, 0.5f, 6f);
+            float alturaTope = bounds.max.y;
+
             var etiquetaGo = new GameObject("Etiqueta");
             etiquetaGo.transform.SetParent(padreTanque, false);
-            etiquetaGo.transform.localPosition = new Vector3(0f, 0.9f, 0f);
+            etiquetaGo.transform.localPosition = new Vector3(0f, alturaTope + 0.3f * factor, 0f);
 
-            var textMesh = etiquetaGo.AddComponent<TextMesh>();
-            textMesh.text = $"{PaletaSkins.ObtenerSimboloCalcomania(skin.Calcomania)} {PaletaSkins.ObtenerNumero(skin.Numero)}";
-            textMesh.characterSize = 0.15f;
-            textMesh.fontSize = 48;
-            textMesh.anchor = TextAnchor.LowerCenter;
+            // Placa de fondo oscura + número blanco: máximo contraste posible sin
+            // depender del color/patrón del tanque (antes el número era solo texto
+            // blanco flotando sobre el propio camuflaje del tanque, por eso costaba
+            // verlo). Ambos llevan MiraSiempreACamara para quedar siempre legibles
+            // sin importar cómo gire la cámara (OrbitZoomCamera).
+            var placaGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            placaGo.name = "PlacaNumero";
+            placaGo.transform.SetParent(etiquetaGo.transform, false);
+            placaGo.transform.localScale = new Vector3(0.55f * factor, 0.28f * factor, 1f);
+            var placaCollider = placaGo.GetComponent<Collider>();
+            if (placaCollider != null) Destroy(placaCollider);
+            var placaRenderer = placaGo.GetComponent<Renderer>();
+            placaRenderer.material = new Material(ObtenerShaderEstandar()) { color = new Color(0.04f, 0.04f, 0.04f, 0.92f) };
+            placaRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            placaGo.AddComponent<MiraSiempreACamara>();
+
+            // El número ya no se elige como skin: es el número de orden en que se
+            // programó el tanque (1, 2, 3...), pintado aquí para poder identificar
+            // cada tanque en el tablero durante la partida.
+            var textoGo = new GameObject("TextoNumero");
+            textoGo.transform.SetParent(etiquetaGo.transform, false);
+            textoGo.transform.localPosition = new Vector3(0f, 0f, -0.01f);
+            var textMesh = textoGo.AddComponent<TextMesh>();
+            textMesh.text = $"{PaletaSkins.ObtenerSimboloCalcomania(skin.Calcomania)} {skin.Numero:D2}";
+            textMesh.characterSize = 0.14f * factor;
+            textMesh.fontSize = 64;
+            textMesh.anchor = TextAnchor.MiddleCenter;
             textMesh.alignment = TextAlignment.Center;
             textMesh.color = Color.white;
+            var textoRenderer = textoGo.GetComponent<MeshRenderer>();
+            textoRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            textoGo.AddComponent<MiraSiempreACamara>();
 
-            var banderaGo = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            banderaGo.transform.SetParent(padreTanque, false);
-            banderaGo.transform.localPosition = new Vector3(0f, 1.15f, 0f);
-            banderaGo.transform.localScale = new Vector3(0.18f, 0.18f, 0.03f);
-            var banderaRenderer = banderaGo.GetComponent<Renderer>();
-            if (banderaRenderer != null) banderaRenderer.material.color = PaletaSkins.ObtenerColorBandera(skin.Bandera);
-            var banderaCollider = banderaGo.GetComponent<Collider>();
-            if (banderaCollider != null) Destroy(banderaCollider);
+            CrearAstaConBandera(padreTanque, skin.Bandera, factor, alturaTope);
+        }
+
+        // Gira el objeto para que siempre mire hacia la cámara principal (billboard),
+        // así la placa del número y la bandera se leen bien sin importar el ángulo
+        // desde el que OrbitZoomCamera esté mirando el tablero.
+        private class MiraSiempreACamara : MonoBehaviour
+        {
+            private void LateUpdate()
+            {
+                var camara = Camera.main;
+                if (camara == null) return;
+                transform.rotation = Quaternion.LookRotation(transform.position - camara.transform.position);
+            }
+        }
+
+        // Asta con la bandera real (dibujada por código, ver PaletaSkins) del país
+        // elegido para el tanque. La bandera es una tira de malla subdividida cuyos
+        // vértices se animan en BanderaOndeante para que "hondee" en el aire.
+        // "factor" y "alturaTope" vienen de CrearEtiquetaFlotante y escalan/ubican
+        // el asta según el tamaño real del modelo (ver comentario ahí).
+        private void CrearAstaConBandera(Transform padreTanque, int indiceBandera, float factor, float alturaTope)
+        {
+            var astaGo = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            astaGo.name = "AstaBandera";
+            astaGo.transform.SetParent(padreTanque, false);
+            astaGo.transform.localPosition = new Vector3(0.32f * factor, alturaTope * 0.55f, 0f);
+            astaGo.transform.localScale = new Vector3(0.025f * factor, 0.28f * factor, 0.025f * factor);
+            var astaRenderer = astaGo.GetComponent<Renderer>();
+            if (astaRenderer != null)
+            {
+                astaRenderer.material = new Material(ObtenerShaderEstandar()) { color = new Color(0.15f, 0.15f, 0.15f) };
+            }
+            var astaCollider = astaGo.GetComponent<Collider>();
+            if (astaCollider != null) Destroy(astaCollider);
+
+            var banderaGo = new GameObject("Bandera");
+            banderaGo.transform.SetParent(astaGo.transform, false);
+            // Contrarresta la escala no-uniforme del cilindro padre para que la
+            // bandera mantenga su proporción real.
+            banderaGo.transform.localScale = new Vector3(1f / (0.025f * factor), 1f / (0.28f * factor), 1f / (0.025f * factor));
+            banderaGo.transform.localPosition = new Vector3(0.55f, 0.75f, 0f);
+
+            const int segmentos = 8;
+            const float anchoBandera = 0.36f, altoBandera = 0.22f;
+            var malla = new Mesh { name = "MallaBandera" };
+            var vertices = new Vector3[(segmentos + 1) * 2];
+            var uvs = new Vector2[vertices.Length];
+            var triangulos = new int[segmentos * 6];
+
+            for (int i = 0; i <= segmentos; i++)
+            {
+                float t = i / (float)segmentos;
+                vertices[i * 2] = new Vector3(t * anchoBandera, altoBandera * 0.5f, 0f);
+                vertices[i * 2 + 1] = new Vector3(t * anchoBandera, -altoBandera * 0.5f, 0f);
+                uvs[i * 2] = new Vector2(t, 1f);
+                uvs[i * 2 + 1] = new Vector2(t, 0f);
+            }
+            for (int i = 0; i < segmentos; i++)
+            {
+                int vi = i * 2, ti = i * 6;
+                triangulos[ti] = vi; triangulos[ti + 1] = vi + 1; triangulos[ti + 2] = vi + 2;
+                triangulos[ti + 3] = vi + 1; triangulos[ti + 4] = vi + 3; triangulos[ti + 5] = vi + 2;
+            }
+            malla.vertices = vertices;
+            malla.uv = uvs;
+            malla.triangles = triangulos;
+            malla.RecalculateNormals();
+            malla.RecalculateBounds();
+
+            var filtro = banderaGo.AddComponent<MeshFilter>();
+            filtro.mesh = malla;
+            var banderaRenderer = banderaGo.AddComponent<MeshRenderer>();
+            banderaRenderer.material = new Material(ObtenerShaderEstandar())
+            {
+                mainTexture = PaletaSkins.GenerarTexturaBandera(indiceBandera)
+            };
+            banderaRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            var ondeante = banderaGo.AddComponent<BanderaOndeante>();
+            ondeante.Inicializar(malla, vertices);
+        }
+
+        // Anima, cuadro a cuadro, los vértices de la malla de una bandera con una
+        // onda senoidal que crece desde el asta (vértices en x=0, fijos) hacia la
+        // punta -- efecto simple de "bandera ondeando al viento", sin física de tela.
+        private class BanderaOndeante : MonoBehaviour
+        {
+            private Mesh malla;
+            private Vector3[] verticesBase;
+            private Vector3[] verticesAnimados;
+            private float faseAleatoria;
+
+            public void Inicializar(Mesh mallaObjetivo, Vector3[] verticesOriginales)
+            {
+                malla = mallaObjetivo;
+                verticesBase = verticesOriginales;
+                verticesAnimados = new Vector3[verticesOriginales.Length];
+                faseAleatoria = Random.Range(0f, Mathf.PI * 2f);
+            }
+
+            private void Update()
+            {
+                if (malla == null || verticesBase == null) return;
+
+                float t = Time.time * 4.5f + faseAleatoria;
+                for (int i = 0; i < verticesBase.Length; i++)
+                {
+                    var v = verticesBase[i];
+                    // La amplitud crece con la distancia al asta (v.x) para que el
+                    // borde pegado al asta quede quieto y la punta ondee más.
+                    float amplitud = v.x * 0.09f;
+                    float desplazamiento = Mathf.Sin(t + v.x * 9f) * amplitud;
+                    verticesAnimados[i] = new Vector3(v.x, v.y, desplazamiento);
+                }
+                malla.vertices = verticesAnimados;
+                malla.RecalculateNormals();
+            }
         }
 
         private System.Collections.IEnumerator MoverTanqueSuave(Transform visual, Vector3 destinoLocal)
@@ -2147,7 +2468,7 @@ namespace TanksGame.Visual
                 case DamageEventType.Choque:
                 {
                     // El "rebote" es el mismo golpecito que usa Desgaste
-                    // (SacudirTanque), pero acá se dispara para CADA tanque
+                    // (SacudirTanque), pero aquí se dispara para CADA tanque
                     // involucrado -- uno solo si chocó contra un obstáculo,
                     // los dos si chocaron entre sí -- y en paralelo con la
                     // explosión, para que se sienta como un impacto real y
@@ -2248,7 +2569,7 @@ namespace TanksGame.Visual
             {
                 // El AMT no termina en una explosión grande: cada bala ya
                 // deja su propia chispa de impacto (ver VolarBala). Poner
-                // además la Explosion() grande acá es lo que hacía que la
+                // además la Explosion() grande aquí es lo que hacía que la
                 // ráfaga se confundiera visualmente con el misil.
                 yield return RafagaDeAmt(origen, destino);
             }

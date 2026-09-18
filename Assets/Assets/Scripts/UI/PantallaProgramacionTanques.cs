@@ -29,9 +29,15 @@ namespace TanksGame.UI
     //     que quieras.
     //  4. "INICIAR" (barra superior) arranca la partida — exige que ya se haya
     //     alcanzado el mínimo de tanques programados.
-    //  El botón "GUARDAR SCRIPT" (.TXT, en la barra superior) es independiente de todo
-    //  esto: sirve para exportar el contenido actual del editor a un archivo con
-    //  cualquier nombre que el jugador quiera, para reutilizarlo más adelante.
+    //  Los botones "GUARDAR SCRIPT" y "CARGAR SCRIPT" (.TXT, barra superior) son
+    //  independientes de todo esto y usan el explorador de archivos NATIVO del
+    //  sistema operativo (Windows, Linux, macOS) vía el plugin SFB
+    //  (StandaloneFileBrowser): "GUARDAR SCRIPT" deja elegir cuál script del
+    //  Historial exportar y dónde guardarlo en la máquina del jugador; "CARGAR
+    //  SCRIPT" abre cualquier .txt de la máquina y lo vuelca en la Terminal para
+    //  modificarlo y volver a guardarlo. El Historial en sí (panel izquierdo) es
+    //  permanente: se guarda como JSON en persistentDataPath y sobrevive a cerrar
+    //  el juego o a volver a darle Play en el editor de Unity.
     public class PantallaProgramacionTanques : MonoBehaviour
     {
         [Header("Colores placeholder (se usan solo si no asignas un sprite abajo)")]
@@ -51,7 +57,7 @@ namespace TanksGame.UI
         [Tooltip("Si está activo, se agrega una viñeta sutil (oscurece los bordes) sobre el fondo.")]
         public bool usarVinetaDeFondo = true;
 
-        [Header("Arte real (opcional). Arrastra tus PNG acá; si dejas un campo vacío, se usa el color de arriba.")]
+        [Header("Arte real (opcional). Arrastra tus PNG aquí; si dejas un campo vacío, se usa el color de arriba.")]
         public Sprite spriteFondoPantalla;
         public Sprite spriteMarcoPanel;      // Se reutiliza en la barra superior y los 4 paneles.
         public Sprite spriteFondoBoton;      // Se reutiliza en los 5 botones de acción.
@@ -80,7 +86,7 @@ namespace TanksGame.UI
         public float volumenMusica = 0.5f;
 
         [Header("Vista previa 3D del tanque (opcional)")]
-        [Tooltip("Si asignás un prefab acá (ej. el Tank_006 del asset pack), se muestra el modelo 3D real (renderizado por una cámara aparte a una textura) en vez de la silueta dibujada por código.")]
+        [Tooltip("Si asignas un prefab aquí (ej. el Tank_006 del asset pack), se muestra el modelo 3D real (renderizado por una cámara aparte a una textura) en vez de la silueta dibujada por código.")]
         public GameObject prefabTanquePreview;
         [Tooltip("Rotación inicial del modelo dentro del 'escenario' de la vista previa, para elegir un buen ángulo de cámara.")]
         public Vector3 rotacionInicialTanque = new Vector3(10f, 200f, 0f);
@@ -98,7 +104,7 @@ namespace TanksGame.UI
         public float velocidadZoomCamara = 0.6f;
 
         [Header("Programación de tanques (mínimo/máximo)")]
-        [Tooltip("No se puede jugar con menos tanques que este número; se fuerza a seguir programando hasta llegar acá.")]
+        [Tooltip("No se puede jugar con menos tanques que este número; se fuerza a seguir programando hasta llegar aquí.")]
         public int cantidadMinimaTanquesParaJugar = 2;
         [Tooltip("Tope de tanques que se pueden programar en total.")]
         public int cantidadMaximaTanques = 6;
@@ -123,10 +129,7 @@ namespace TanksGame.UI
         // un .txt con cualquier nombre. Independiente del Historial (que usa nombres
         // automáticos "Tanque N").
         private GameObject overlayNombreArchivo;
-        private InputField campoNombreOverlay;
         private Text tituloOverlayNombre;
-        private Text textoBotonConfirmarOverlay;
-        private Action<string> accionConfirmarNombreArchivo;
         private string nombreArchivoActual = "";
 
         // Si no es null, significa que el contenido del editor vino de tocar un
@@ -190,23 +193,17 @@ namespace TanksGame.UI
 
         private static readonly Color[] ColoresPrincipales =
         {
-            new Color(0.30f, 0.36f, 0.22f),
-            new Color(0.55f, 0.47f, 0.33f),
-            new Color(0.35f, 0.36f, 0.38f),
-            new Color(0.20f, 0.28f, 0.34f),
+            new Color(0.30f, 0.36f, 0.22f), // Verde militar
+            new Color(0.55f, 0.47f, 0.33f), // Arena
+            new Color(0.35f, 0.36f, 0.38f), // Gris urbano
+            new Color(0.20f, 0.28f, 0.34f), // Azul marino
+            new Color(0.45f, 0.04f, 0.04f), // Rojo sangre
+            new Color(0.06f, 0.06f, 0.07f), // Negro ónix
+            new Color(0.62f, 0.49f, 0.10f), // Dorado
+            new Color(0.28f, 0.09f, 0.42f), // Púrpura real
         };
 
-        private static readonly string[] SimbolosCalcomania = { "★", "✖", "●", "▲" };
-        private static readonly string[] NumerosTanque = { "01", "07", "13", "99" };
-
-        private static readonly Color[] ColoresBandera =
-        {
-            new Color(0.75f, 0.15f, 0.15f),
-            new Color(0.15f, 0.35f, 0.65f),
-            new Color(0.20f, 0.55f, 0.25f),
-            new Color(0.80f, 0.65f, 0.15f),
-            new Color(0.85f, 0.85f, 0.85f),
-        };
+        private static readonly string[] SimbolosCalcomania = { "★", "✖", "●", "▲", "☠", "⚔", "✦", "⚡" };
 
         private readonly List<EntradaHistorial> historial = new List<EntradaHistorial>();
         private readonly Dictionary<string, List<Image>> swatchesPorGrupo = new Dictionary<string, List<Image>>();
@@ -225,12 +222,82 @@ namespace TanksGame.UI
         private RenderTexture renderTexturaPreview;
         private readonly Dictionary<string, Sprite> spritesPatronCache = new Dictionary<string, Sprite>();
 
+        [Serializable]
         private class EntradaHistorial
         {
             public string nombre;
             public string fechaHora;
             public string contenido;
+
+            // Personalización del tanque en el momento en que se guardó este
+            // script (mismos índices que seleccionActual/ObtenerSkinActual). Viaja
+            // con la entrada -- así, al tocarla en el Historial, se puede
+            // reconstruir cómo se ve ese tanque en vez de perder la
+            // personalización. Entradas viejas (guardadas antes de este campo)
+            // simplemente quedan en 0 (primer patrón/color/calcomanía/bandera).
+            public int patron;
+            public int color;
+            public int calcomania;
+            public int bandera;
         }
+
+        // Envoltorio porque JsonUtility no serializa listas en la raíz.
+        [Serializable]
+        private class HistorialGuardadoEnDisco
+        {
+            public List<EntradaHistorial> entradas = new List<EntradaHistorial>();
+        }
+
+        // El historial ahora es PERMANENTE: sobrevive a cerrar el juego y a volver a
+        // darle Play en el editor de Unity. Se guarda como JSON en persistentDataPath
+        // (misma carpeta que ScriptsTanques, pero un archivo aparte) y se recarga
+        // completo en Start(). Cada cambio al historial (agregar, actualizar, borrar,
+        // limpiar) llama a GuardarHistorialEnDisco() para que quede sincronizado.
+        private const string NOMBRE_ARCHIVO_HISTORIAL = "historial_scripts.json";
+
+        private string RutaArchivoHistorial() =>
+            Path.Combine(RutaCarpetaScripts(), NOMBRE_ARCHIVO_HISTORIAL);
+
+        private void GuardarHistorialEnDisco()
+        {
+            try
+            {
+                var datos = new HistorialGuardadoEnDisco { entradas = historial };
+                string json = JsonUtility.ToJson(datos, prettyPrint: true);
+                File.WriteAllText(RutaArchivoHistorial(), json);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"No se pudo guardar el historial en disco: {e.Message}");
+            }
+        }
+
+        private void CargarHistorialDesdeDisco()
+        {
+            try
+            {
+                string ruta = RutaArchivoHistorial();
+                if (!File.Exists(ruta)) return;
+
+                string json = File.ReadAllText(ruta);
+                var datos = JsonUtility.FromJson<HistorialGuardadoEnDisco>(json);
+                if (datos?.entradas == null) return;
+
+                historial.Clear();
+                historial.AddRange(datos.entradas);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"No se pudo cargar el historial guardado: {e.Message}");
+            }
+        }
+
+        // Nombre único para una entrada nueva del historial: fecha y hora hasta
+        // segundos + número de tanque. Antes se usaba solo "Tanque N", que se repetía
+        // entre partidas -- ahora que el historial es permanente, dos sesiones
+        // distintas programando un "Tanque 1" chocarían con el mismo nombre.
+        private string GenerarNombreUnicoHistorial(int numeroTanque) =>
+            $"{DateTime.Now:yyyy-MM-dd_HH-mm-ss}_Tanque{numeroTanque}";
 
         private void OnDestroy()
         {
@@ -263,6 +330,8 @@ namespace TanksGame.UI
 
         private void Start()
         {
+            CargarHistorialDesdeDisco();
+
             if (FindObjectOfType<AudioListener>() == null)
             {
                 gameObject.AddComponent<AudioListener>();
@@ -833,7 +902,7 @@ private void AsegurarCursorVisible()
             // (sin taparse ni superponerse).
             var botonGuardarTanque = CrearRectElastico(panel.transform, "BotonGuardarScriptTanque",
                 new Vector2(0, 0), new Vector2(0.5f, 0),
-                new Vector2(15, 46), new Vector2(-80, 85),
+                new Vector2(15, 46), new Vector2(-90, 85),
                 colorBoton, null);
             rectBotonGuardarTanque = botonGuardarTanque.GetComponent<RectTransform>();
             var btnGuardarTanque = botonGuardarTanque.AddComponent<Button>();
@@ -853,7 +922,7 @@ private void AsegurarCursorVisible()
 
             var botonCancelarEdicion = CrearRectElastico(panel.transform, "BotonCancelarEdicion",
                 new Vector2(0.5f, 0), new Vector2(1, 0),
-                new Vector2(-70, 46), new Vector2(-165, 85),
+                new Vector2(-70, 46), new Vector2(-175, 85),
                 colorBotonAccentoRojo, null);
             botonCancelarEdicionRef = botonCancelarEdicion.AddComponent<Button>();
             botonCancelarEdicionRef.targetGraphic = botonCancelarEdicion.GetComponent<Image>();
@@ -1136,9 +1205,9 @@ private void AsegurarCursorVisible()
 
             textoDecalPreview = CrearTexto(areaGo.transform, "DecalPreview", SimbolosCalcomania[0],
                 new Vector2(10, 10), new Vector2(50, 40), 26, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
-            textoNumeroPreview = CrearTexto(areaGo.transform, "NumeroPreview", NumerosTanque[0],
+            textoNumeroPreview = CrearTexto(areaGo.transform, "NumeroPreview", "01",
                 new Vector2(356, 190), new Vector2(70, 24), 18, FontStyle.Bold, TextAnchor.MiddleRight, colorTexto);
-            var banderaGo = CrearRect(areaGo.transform, "BanderaPreview", new Vector2(396, 10), new Vector2(30, 20), ColoresBandera[0]);
+            var banderaGo = CrearRect(areaGo.transform, "BanderaPreview", new Vector2(396, 10), new Vector2(30, 20), colorSwatch);
             imagenBanderaPreview = banderaGo.GetComponent<Image>();
 
             CrearFlecha(panel.transform, "BotonSkinAnterior", "<", new Vector2(25, 150), () => OnCambiarSkin(-1));
@@ -1300,61 +1369,106 @@ private void AsegurarCursorVisible()
             AgregarBracketsDeEsquina(panel.transform, colorAcentoMilitar);
 
             var contenido = CrearAreaConScroll(panel.transform, "ScrollPersonalizarSkin",
-                new Vector2(0, 15), new Vector2(0, 55), 320f);
+                new Vector2(0, 15), new Vector2(0, 55), 530f);
 
             CrearTexto(contenido, "TituloPatron", "PATRÓN", new Vector2(15, 5), new Vector2(180, 22),
                 14, FontStyle.Bold, TextAnchor.MiddleLeft, colorTextoSecundario);
             CrearTexto(contenido, "TituloColorPrincipal", "COLOR PRINCIPAL", new Vector2(245, 5), new Vector2(200, 22),
                 14, FontStyle.Bold, TextAnchor.MiddleLeft, colorTextoSecundario);
 
-            CrearFilaSwatches(contenido, "Patron", 4, new Vector2(15, 35));
-            CrearFilaSwatches(contenido, "Color", 4, new Vector2(245, 35));
+            // PATRÓN: 6 diseños en 2 filas de 3 -- incluye "Llamas" y "Camuflaje
+            // digital" como opciones épicas adicionales a las 4 originales.
+            CrearFilaSwatches(contenido, "Patron", 3, new Vector2(15, 35), 0);
+            CrearFilaSwatches(contenido, "Patron", 3, new Vector2(15, 90), 3);
+            // COLOR PRINCIPAL: 8 colores en 2 filas de 4 (los 4 originales + Rojo
+            // sangre, Negro ónix, Dorado y Púrpura real).
+            CrearFilaSwatches(contenido, "Color", 4, new Vector2(245, 35), 0);
+            CrearFilaSwatches(contenido, "Color", 4, new Vector2(245, 90), 4);
             AplicarColoresReales("Color", ColoresPrincipales);
             RegenerarVisualesPatron();
 
-            CrearTexto(contenido, "TituloCalcomanias", "CALCOMANÍAS", new Vector2(15, 110), new Vector2(200, 22),
-                14, FontStyle.Bold, TextAnchor.MiddleLeft, colorTextoSecundario);
-            CrearTexto(contenido, "TituloNumero", "NÚMERO", new Vector2(245, 110), new Vector2(200, 22),
+            // CALCOMANÍAS: 8 diseños en 2 filas de 4 (el espacio que antes ocupaba
+            // el selector de NÚMERO, ahora automático -- ver comentario en
+            // TanqueSkinDatos.cs). Incluye diseños "épicos": ☠ ⚔ ✦ ⚡.
+            CrearTexto(contenido, "TituloCalcomanias", "CALCOMANÍAS", new Vector2(15, 165), new Vector2(200, 22),
                 14, FontStyle.Bold, TextAnchor.MiddleLeft, colorTextoSecundario);
 
-            CrearFilaSwatches(contenido, "Calcomania", 4, new Vector2(15, 140));
+            CrearFilaSwatches(contenido, "Calcomania", 4, new Vector2(15, 195), 0);
+            CrearFilaSwatches(contenido, "Calcomania", 4, new Vector2(15, 250), 4);
             AplicarEtiquetas("Calcomania", SimbolosCalcomania);
-            CrearFilaSwatches(contenido, "Numero", 4, new Vector2(245, 140));
-            AplicarEtiquetas("Numero", NumerosTanque);
 
-            CrearTexto(contenido, "TituloBandera", "BANDERA", new Vector2(15, 215), new Vector2(200, 22),
+            // BANDERAS: países de la 1ra/2da Guerra Mundial, dibujadas por código
+            // (PaletaSkins.GenerarTexturaBandera) -- sin plugin externo. 18 banderas
+            // en 3 filas de 6.
+            CrearTexto(contenido, "TituloBandera", "BANDERA", new Vector2(15, 315), new Vector2(200, 22),
                 14, FontStyle.Bold, TextAnchor.MiddleLeft, colorTextoSecundario);
-            CrearFilaSwatches(contenido, "Bandera", 5, new Vector2(15, 245));
-            AplicarColoresReales("Bandera", ColoresBandera);
+            CrearFilaSwatches(contenido, "Bandera", 6, new Vector2(15, 345), 0);
+            CrearFilaSwatches(contenido, "Bandera", 6, new Vector2(15, 400), 6);
+            CrearFilaSwatches(contenido, "Bandera", 6, new Vector2(15, 455), 12);
+            RegenerarVisualesBandera();
 
             ActualizarVistaPreviaTanque();
         }
 
-        private void CrearFilaSwatches(Transform padre, string grupo, int cantidad, Vector2 posicion)
+        // Pinta cada swatch de "Bandera" con la textura real generada por
+        // PaletaSkins.GenerarTexturaBandera (en vez de un simple color plano).
+        private void RegenerarVisualesBandera()
+        {
+            if (!contenidoSwatchesPorGrupo.TryGetValue("Bandera", out var lista)) return;
+            for (int i = 0; i < lista.Count; i++)
+            {
+                lista[i].sprite = GenerarSpriteBandera(i);
+                lista[i].type = Image.Type.Simple;
+                lista[i].color = Color.white;
+            }
+        }
+
+        private Sprite GenerarSpriteBandera(int indiceBandera)
+        {
+            string clave = $"bandera_{indiceBandera}";
+            if (spritesPatronCache.TryGetValue(clave, out var spriteExistente))
+                return spriteExistente;
+
+            var textura = PaletaSkins.GenerarTexturaBandera(indiceBandera);
+            var sprite = Sprite.Create(textura, new Rect(0, 0, textura.width, textura.height), new Vector2(0.5f, 0.5f), 100f);
+            spritesPatronCache[clave] = sprite;
+            return sprite;
+        }
+
+        // indiceInicial permite construir un grupo en varias filas (ej. 8
+        // calcomanías en 2 filas de 4, o 18 banderas en 3 filas de 6): cada llamada
+        // agrega swatches al MISMO grupo en vez de reemplazar los anteriores.
+        private void CrearFilaSwatches(Transform padre, string grupo, int cantidad, Vector2 posicion, int indiceInicial = 0)
         {
             const float tamano = 45f, gap = 10f, margenMarco = 4f;
-            var listaMarcos = new List<Image>();
-            swatchesPorGrupo[grupo] = listaMarcos;
-            var listaContenido = new List<Image>();
-            contenidoSwatchesPorGrupo[grupo] = listaContenido;
+            if (!swatchesPorGrupo.TryGetValue(grupo, out var listaMarcos))
+            {
+                listaMarcos = new List<Image>();
+                swatchesPorGrupo[grupo] = listaMarcos;
+            }
+            if (!contenidoSwatchesPorGrupo.TryGetValue(grupo, out var listaContenido))
+            {
+                listaContenido = new List<Image>();
+                contenidoSwatchesPorGrupo[grupo] = listaContenido;
+            }
             if (!seleccionActual.ContainsKey(grupo)) seleccionActual[grupo] = 0;
 
             for (int i = 0; i < cantidad; i++)
             {
                 var posMarco = new Vector2(posicion.x + i * (tamano + gap) - margenMarco, posicion.y - margenMarco);
-                var marcoGo = CrearRect(padre, $"Marco{grupo}_{i}", posMarco,
+                var marcoGo = CrearRect(padre, $"Marco{grupo}_{indiceInicial + i}", posMarco,
                     new Vector2(tamano + margenMarco * 2, tamano + margenMarco * 2), new Color(0, 0, 0, 0));
                 var marcoImagen = marcoGo.GetComponent<Image>();
                 listaMarcos.Add(marcoImagen);
 
-                var swatchGo = CrearRect(marcoGo.transform, $"Swatch{grupo}_{i}",
+                var swatchGo = CrearRect(marcoGo.transform, $"Swatch{grupo}_{indiceInicial + i}",
                     new Vector2(margenMarco, margenMarco), new Vector2(tamano, tamano), colorSwatch);
                 listaContenido.Add(swatchGo.GetComponent<Image>());
 
                 var boton = marcoGo.AddComponent<Button>();
                 boton.targetGraphic = marcoImagen;
-                int indice = i;
-                boton.onClick.AddListener(() => OnSeleccionarSwatch(grupo, indice));
+                int indiceGlobal = indiceInicial + i;
+                boton.onClick.AddListener(() => OnSeleccionarSwatch(grupo, indiceGlobal));
             }
 
             ResaltarSeleccion(grupo);
@@ -1415,28 +1529,54 @@ private void AsegurarCursorVisible()
             Color oscuro = new Color(colorBase.r * 0.55f, colorBase.g * 0.55f, colorBase.b * 0.55f, 1f);
             Color claro = Color.Lerp(colorBase, Color.white, 0.4f);
 
+            // Colores de fuego para "Llamas" (índice 4): fijos, no dependen del
+            // color principal, para que el patrón se vea igual de épico siempre.
+            Color llamaRoja = new Color(0.55f, 0.03f, 0.01f);
+            Color llamaNaranja = new Color(0.92f, 0.42f, 0.04f);
+            Color llamaAmarilla = new Color(1f, 0.86f, 0.25f);
+
             for (int y = 0; y < n; y++)
             {
                 for (int x = 0; x < n; x++)
                 {
-                    bool esClaro;
+                    Color pixel;
                     switch (patronIndice)
                     {
-                        case 0:
-                            esClaro = false;
+                        case 0: // Liso
+                            pixel = oscuro;
                             break;
-                        case 1:
-                            esClaro = ((x + y) / 4) % 2 == 0;
+                        case 1: // Cuadros
+                            pixel = ((x + y) / 4) % 2 == 0 ? claro : oscuro;
                             break;
-                        case 2:
+                        case 2: // Punteado
+                        {
                             int cx = (x % 8) - 4, cy = (y % 8) - 4;
-                            esClaro = (cx * cx + cy * cy) < 6;
+                            pixel = (cx * cx + cy * cy) < 6 ? claro : oscuro;
                             break;
+                        }
+                        case 3: // Camuflaje (manchas orgánicas)
+                            pixel = Mathf.PerlinNoise(x * 0.25f, y * 0.25f) > 0.55f ? claro : oscuro;
+                            break;
+                        case 4: // Llamas (patrón épico de fuego)
+                        {
+                            float alturaNormalizada = y / (float)(n - 1);
+                            float parpadeo = Mathf.PerlinNoise(x * 0.3f, y * 0.35f);
+                            float intensidad = Mathf.Clamp01((1f - alturaNormalizada) * 1.1f + (parpadeo - 0.5f) * 0.7f);
+                            pixel = intensidad > 0.72f ? llamaAmarilla : (intensidad > 0.38f ? llamaNaranja : llamaRoja);
+                            break;
+                        }
+                        case 5: // Camuflaje digital (bloques pixelados)
+                        {
+                            const int bloque = 4;
+                            int bx = x / bloque, by = y / bloque;
+                            pixel = Mathf.PerlinNoise(bx * 0.6f, by * 0.6f) > 0.5f ? claro : oscuro;
+                            break;
+                        }
                         default:
-                            esClaro = Mathf.PerlinNoise(x * 0.25f, y * 0.25f) > 0.55f;
+                            pixel = Mathf.PerlinNoise(x * 0.25f, y * 0.25f) > 0.55f ? claro : oscuro;
                             break;
                     }
-                    textura.SetPixel(x, y, esClaro ? claro : oscuro);
+                    textura.SetPixel(x, y, pixel);
                 }
             }
             textura.Apply();
@@ -1448,7 +1588,9 @@ private void AsegurarCursorVisible()
 
         // Lee la personalización actualmente elegida en "PERSONALIZAR SKIN" (la
         // misma que se ve en "Vista previa del tanque"), como snapshot para
-        // guardarla junto con el script del tanque.
+        // guardarla junto con el script del tanque. "Numero" ya no se elige: se
+        // asigna automático según el orden de programación (1, 2, 3...) y se pinta
+        // en el casco durante la partida.
         private TanqueSkinDatos ObtenerSkinActual()
         {
             return new TanqueSkinDatos
@@ -1456,7 +1598,7 @@ private void AsegurarCursorVisible()
                 Patron = seleccionActual.TryGetValue("Patron", out var p) ? p : 0,
                 Color = seleccionActual.TryGetValue("Color", out var c) ? c : 0,
                 Calcomania = seleccionActual.TryGetValue("Calcomania", out var d) ? d : 0,
-                Numero = seleccionActual.TryGetValue("Numero", out var num) ? num : 0,
+                Numero = scriptsPorTanque.Count + 1,
                 Bandera = seleccionActual.TryGetValue("Bandera", out var b) ? b : 0
             };
         }
@@ -1466,7 +1608,6 @@ private void AsegurarCursorVisible()
             int iPatron = seleccionActual.TryGetValue("Patron", out var p) ? p : 0;
             int iColor = seleccionActual.TryGetValue("Color", out var c) ? c : 0;
             int iCalcomania = seleccionActual.TryGetValue("Calcomania", out var d) ? d : 0;
-            int iNumero = seleccionActual.TryGetValue("Numero", out var num) ? num : 0;
             int iBandera = seleccionActual.TryGetValue("Bandera", out var b) ? b : 0;
 
             if (imagenCascoTanque != null)
@@ -1485,8 +1626,15 @@ private void AsegurarCursorVisible()
             }
 
             if (textoDecalPreview != null) textoDecalPreview.text = SimbolosCalcomania[iCalcomania];
-            if (textoNumeroPreview != null) textoNumeroPreview.text = NumerosTanque[iNumero];
-            if (imagenBanderaPreview != null) imagenBanderaPreview.color = ColoresBandera[iBandera];
+            // El número que se muestra en la vista previa es el que le tocará al
+            // PRÓXIMO tanque a programar (automático, no elegible).
+            if (textoNumeroPreview != null) textoNumeroPreview.text = (scriptsPorTanque.Count + 1).ToString("D2");
+            if (imagenBanderaPreview != null)
+            {
+                imagenBanderaPreview.sprite = GenerarSpriteBandera(iBandera);
+                imagenBanderaPreview.type = Image.Type.Simple;
+                imagenBanderaPreview.color = Color.white;
+            }
         }
 
         private void AplicarSkinAlModelo3D(int iPatron, int iColor)
@@ -1575,13 +1723,21 @@ private void AsegurarCursorVisible()
         // OVERLAY "GUARDAR COMO" / "ABRIR" (usado por GUARDAR SCRIPT y CARGAR SCRIPT).
         // ------------------------------------------------------------------
 
+        // Este overlay ahora solo se usa para "GUARDAR SCRIPT" (barra superior),
+        // como selector de CUÁL script del Historial exportar a la máquina del
+        // usuario. "CARGAR SCRIPT" ya no lo usa: abre directo el explorador de
+        // archivos nativo del sistema operativo (ver OnCargarScript). Tras elegir
+        // una fila aquí, se abre el diálogo nativo "Guardar como" para elegir dónde
+        // en el sistema de archivos (Windows, Linux, macOS) se guarda el .txt.
+        private Transform contenedorListaOverlay;
+
         private void ConstruirOverlayNombreArchivo(Transform padre)
         {
             overlayNombreArchivo = CrearRectElastico(padre, "OverlayNombreArchivo",
                 Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero,
                 new Color(0, 0, 0, 0.75f), null);
 
-            var caja = CrearRect(overlayNombreArchivo.transform, "Caja", Vector2.zero, new Vector2(460, 230), colorPanel);
+            var caja = CrearRect(overlayNombreArchivo.transform, "Caja", Vector2.zero, new Vector2(460, 420), colorPanel);
             var cajaRect = caja.GetComponent<RectTransform>();
             cajaRect.anchorMin = new Vector2(0.5f, 0.5f);
             cajaRect.anchorMax = new Vector2(0.5f, 0.5f);
@@ -1591,17 +1747,19 @@ private void AsegurarCursorVisible()
             tituloOverlayNombre = CrearTexto(caja.transform, "Titulo", "GUARDAR SCRIPT COMO",
                 new Vector2(20, 20), new Vector2(420, 30), 18, FontStyle.Bold, TextAnchor.MiddleLeft, colorBotonAccentoRojo);
 
-            campoNombreOverlay = CrearCampoTextoUnaLinea(caja.transform, "CampoNombre", "nombre_del_script",
-                new Vector2(20, 65), new Vector2(420, 42));
+            CrearTexto(caja.transform, "Subtitulo", "Elige qué script del historial exportar como .txt:",
+                new Vector2(20, 55), new Vector2(420, 22), 12, FontStyle.Italic, TextAnchor.MiddleLeft, colorTextoSecundario);
 
-            var botonConfirmar = CrearRect(caja.transform, "BotonConfirmar", new Vector2(30, 155), new Vector2(200, 50), colorBotonAccentoVerde);
-            var confirmarBtn = botonConfirmar.AddComponent<Button>();
-            confirmarBtn.targetGraphic = botonConfirmar.GetComponent<Image>();
-            confirmarBtn.onClick.AddListener(() => accionConfirmarNombreArchivo?.Invoke(campoNombreOverlay.text));
-            textoBotonConfirmarOverlay = CrearTexto(botonConfirmar.transform, "Texto", "GUARDAR", Vector2.zero, new Vector2(200, 50),
-                16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            contenedorListaOverlay = CrearAreaConScroll(caja.transform, "ListaOverlay",
+                new Vector2(20, 90), new Vector2(20, 90), 0f);
 
-            var botonCancelar = CrearRect(caja.transform, "BotonCancelar", new Vector2(250, 155), new Vector2(200, 50), colorBoton);
+            // Antes este botón quedaba en (130, 25) -- casi arriba de la caja --
+            // así que se dibujaba ENCIMA del título/subtítulo y, al tener Image
+            // (que bloquea raycasts), robaba los clicks de la lista de historial
+            // que hay debajo. Por eso el cuadro se veía "raro" y no dejaba elegir
+            // ningún script: nunca llegaba el click a la fila. Va abajo de todo,
+            // dentro del margen que ya reservaba CrearAreaConScroll (90px).
+            var botonCancelar = CrearRect(caja.transform, "BotonCancelar", new Vector2(130, 355), new Vector2(200, 50), colorBoton);
             var cancelarBtn = botonCancelar.AddComponent<Button>();
             cancelarBtn.targetGraphic = botonCancelar.GetComponent<Image>();
             cancelarBtn.onClick.AddListener(() => overlayNombreArchivo.SetActive(false));
@@ -1611,15 +1769,51 @@ private void AsegurarCursorVisible()
             overlayNombreArchivo.SetActive(false);
         }
 
-        private void AbrirOverlayNombreArchivo(string titulo, string textoBoton, string nombrePrellenado, Action<string> alConfirmar)
+        // Reconstruye la lista de scripts del Historial dentro del overlay, uno por
+        // fila; tocar una fila dispara el diálogo nativo "Guardar como" con ese
+        // contenido y ese nombre sugerido.
+        //
+        // Antes las filas se creaban con CrearRectElasticoLocal (anclado y con
+        // offsets), pero con el signo invertido: el borde superior de cada fila
+        // quedaba en offsetMax.y = +y en vez de -y, así que a medida que "y"
+        // crecía la fila se iba ARRIBA del contenedor (fuera del área visible que
+        // recorta el RectMask2D del scroll) en vez de abajo. Por eso la lista se
+        // veía vacía y no había nada que tocar. Ahora usa el mismo patrón simple
+        // (CrearRect, posición absoluta hacia abajo) que ya funciona en
+        // CrearItemHistorial/ReconstruirListaHistorial.
+        private void AbrirOverlaySeleccionarParaExportar()
         {
-            tituloOverlayNombre.text = titulo;
-            textoBotonConfirmarOverlay.text = textoBoton;
-            campoNombreOverlay.text = nombrePrellenado ?? "";
-            accionConfirmarNombreArchivo = alConfirmar;
+            for (int i = contenedorListaOverlay.childCount - 1; i >= 0; i--)
+                Destroy(contenedorListaOverlay.GetChild(i).gameObject);
+
+            if (historial.Count == 0)
+            {
+                CrearTexto(contenedorListaOverlay, "Vacio", "(sin scripts guardados todavía)",
+                    new Vector2(0, 0), new Vector2(400, 26), 13, FontStyle.Italic, TextAnchor.MiddleLeft, colorTextoSecundario);
+            }
+            else
+            {
+                float y = 0f;
+                const float altoFila = 34f;
+                for (int i = historial.Count - 1; i >= 0; i--)
+                {
+                    var entrada = historial[i];
+                    var fila = CrearRect(contenedorListaOverlay, $"Fila_{i}", new Vector2(0, y),
+                        new Vector2(400, altoFila), colorBoton);
+                    var boton = fila.AddComponent<Button>();
+                    boton.targetGraphic = fila.GetComponent<Image>();
+                    boton.onClick.AddListener(() => ExportarEntradaHistorialAMaquina(entrada));
+                    CrearTexto(fila.transform, "Texto", $"{entrada.nombre}  ({entrada.fechaHora})",
+                        new Vector2(10, 0), new Vector2(380, altoFila), 13, FontStyle.Normal, TextAnchor.MiddleLeft, colorTexto);
+                    y += altoFila + 4f;
+                }
+
+                if (contenedorListaOverlay is RectTransform contenidoRect)
+                    contenidoRect.sizeDelta = new Vector2(0, y);
+            }
+
+            tituloOverlayNombre.text = "GUARDAR SCRIPT COMO";
             overlayNombreArchivo.SetActive(true);
-            campoNombreOverlay.Select();
-            campoNombreOverlay.ActivateInputField();
         }
 
         // ------------------------------------------------------------------
@@ -2143,53 +2337,56 @@ private void AsegurarCursorVisible()
             return nombre;
         }
 
+        // "GUARDAR SCRIPT" (barra superior): abre el selector interno para elegir
+        // CUÁL script del Historial exportar (ver AbrirOverlaySeleccionarParaExportar),
+        // y desde ahí se dispara el diálogo nativo "Guardar como" del sistema
+        // operativo del jugador (Windows, Linux o macOS), vía SFB.
         private void OnGuardarScript()
         {
-            AbrirOverlayNombreArchivo("GUARDAR SCRIPT COMO", "GUARDAR", nombreArchivoActual, GuardarArchivoComo);
+            AbrirOverlaySeleccionarParaExportar();
         }
 
+        // "CARGAR SCRIPT" (barra superior): abre directo el explorador de archivos
+        // nativo del sistema operativo para elegir un .txt de donde sea en la
+        // máquina del usuario, y lo vuelca en la terminal para poder modificarlo.
         private void OnCargarScript()
         {
-            AbrirOverlayNombreArchivo("ABRIR SCRIPT", "ABRIR", nombreArchivoActual, CargarArchivoDesde);
-        }
+            var rutas = SFB.StandaloneFileBrowser.OpenFilePanel("Abrir script de tanque", "", "txt", false);
+            if (rutas == null || rutas.Length == 0 || string.IsNullOrEmpty(rutas[0])) return;
 
-        private void GuardarArchivoComo(string nombreCrudo)
-        {
             try
             {
-                string nombre = SanearNombreArchivo(nombreCrudo);
-                string ruta = Path.Combine(RutaCarpetaScripts(), nombre + ".txt");
-                File.WriteAllText(ruta, campoEditor.text);
-                nombreArchivoActual = nombre;
-                overlayNombreArchivo.SetActive(false);
-                ActualizarTextoEstado($"Guardado como \"{nombre}.txt\"", esError: false);
-            }
-            catch (Exception e)
-            {
-                ActualizarTextoEstado($"No se pudo guardar ({e.Message})", esError: true);
-            }
-        }
-
-        private void CargarArchivoDesde(string nombreCrudo)
-        {
-            try
-            {
-                string nombre = SanearNombreArchivo(nombreCrudo);
-                string ruta = Path.Combine(RutaCarpetaScripts(), nombre + ".txt");
-                if (!File.Exists(ruta))
-                {
-                    ActualizarTextoEstado($"No existe \"{nombre}.txt\"", esError: true);
-                    return;
-                }
+                string ruta = rutas[0];
                 campoEditor.text = File.ReadAllText(ruta);
                 ActualizarEditorTrasCambio();
-                nombreArchivoActual = nombre;
-                overlayNombreArchivo.SetActive(false);
-                ActualizarTextoEstado($"Cargado \"{nombre}.txt\"", esError: false);
+                nombreArchivoActual = Path.GetFileNameWithoutExtension(ruta);
+                ActualizarTextoEstado($"Cargado \"{Path.GetFileName(ruta)}\" — ya puedes modificarlo y guardarlo.", esError: false);
             }
             catch (Exception e)
             {
                 ActualizarTextoEstado($"No se pudo cargar ({e.Message})", esError: true);
+            }
+        }
+
+        // Dispara el diálogo nativo "Guardar como" con el contenido de una entrada
+        // del historial, para que el jugador elija dónde en su sistema de archivos
+        // (Windows/Linux/macOS) guardar ese .txt para futuras partidas.
+        private void ExportarEntradaHistorialAMaquina(EntradaHistorial entrada)
+        {
+            overlayNombreArchivo.SetActive(false);
+
+            string sugerido = SanearNombreArchivo(entrada.nombre);
+            string ruta = SFB.StandaloneFileBrowser.SaveFilePanel("Guardar script como", "", sugerido, "txt");
+            if (string.IsNullOrEmpty(ruta)) return;
+
+            try
+            {
+                File.WriteAllText(ruta, entrada.contenido);
+                ActualizarTextoEstado($"Guardado en \"{ruta}\"", esError: false);
+            }
+            catch (Exception e)
+            {
+                ActualizarTextoEstado($"No se pudo guardar ({e.Message})", esError: true);
             }
         }
 
@@ -2254,17 +2451,23 @@ private void AsegurarCursorVisible()
             int tanquesProgramados = scriptsPorTanque.Count + 1;
             string nombreTanque = $"Tanque {tanquesProgramados}";
 
+            var skinElegida = ObtenerSkinActual();
             var entrada = new EntradaHistorial
             {
-                nombre = nombreTanque,
-                fechaHora = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
-                contenido = texto
+                nombre = GenerarNombreUnicoHistorial(tanquesProgramados),
+                fechaHora = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                contenido = texto,
+                patron = skinElegida.Patron,
+                color = skinElegida.Color,
+                calcomania = skinElegida.Calcomania,
+                bandera = skinElegida.Bandera
             };
             historial.Add(entrada);
+            GuardarHistorialEnDisco();
             ReconstruirListaHistorial();
 
             scriptsPorTanque.Add(texto);
-            skinsPorTanque.Add(ObtenerSkinActual());
+            skinsPorTanque.Add(skinElegida);
             ActualizarTamanoMinimoTablero(tanquesProgramados);
 
             campoEditor.text = "";
@@ -2286,7 +2489,7 @@ private void AsegurarCursorVisible()
             }
             else
             {
-                ActualizarTextoEstado($"{nombreTanque} guardado. Podés seguir programando otro tanque o iniciar la partida.", esError: false);
+                ActualizarTextoEstado($"{nombreTanque} guardado. Puedes seguir programando otro tanque o iniciar la partida.", esError: false);
             }
 
             ActualizarBotonEliminarScript();
@@ -2309,12 +2512,17 @@ private void AsegurarCursorVisible()
                 return;
             }
 
+            var skinActualizada = ObtenerSkinActual();
             entradaEnEdicion.contenido = texto;
-            entradaEnEdicion.fechaHora = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+            entradaEnEdicion.fechaHora = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            entradaEnEdicion.patron = skinActualizada.Patron;
+            entradaEnEdicion.color = skinActualizada.Color;
+            entradaEnEdicion.calcomania = skinActualizada.Calcomania;
+            entradaEnEdicion.bandera = skinActualizada.Bandera;
             if (indice < scriptsPorTanque.Count)
                 scriptsPorTanque[indice] = texto;
             if (indice < skinsPorTanque.Count)
-                skinsPorTanque[indice] = ObtenerSkinActual();
+                skinsPorTanque[indice] = skinActualizada;
 
             string nombreTanque = entradaEnEdicion.nombre;
             entradaEnEdicion = null;
@@ -2325,6 +2533,7 @@ private void AsegurarCursorVisible()
             ActualizarEditorTrasCambio();
             ActualizarEtiquetaBotonGuardar();
 
+            GuardarHistorialEnDisco();
             ReconstruirListaHistorial();
             ActualizarTextoEstado($"{nombreTanque} actualizado correctamente.", esError: false);
         }
@@ -2352,8 +2561,8 @@ private void AsegurarCursorVisible()
                     ? new Vector2(0.5f, 0f)
                     : new Vector2(1f, 0f);
                 rectBotonGuardarTanque.offsetMax = editandoHistorial
-                    ? new Vector2(-80, 85)
-                    : new Vector2(-95, 85);
+                    ? new Vector2(-90, 85)
+                    : new Vector2(-175, 85);
             }
 
             if (textoBotonCancelarEdicion != null)
@@ -2363,7 +2572,7 @@ private void AsegurarCursorVisible()
         // Arranca la partida de verdad: le deja los tanques programados y el tamaño
         // de tablero al GameManager (a través de ConfiguracionPartidaPendiente, en
         // TanksGame.Core) y recién ahí carga la escena de juego. El GameManager los
-        // lee solo en su propio Awake() (ver GameManager.cs) — acá no hace falta
+        // lee solo en su propio Awake() (ver GameManager.cs) — aquí no hace falta
         // ninguna otra referencia a la escena de juego.
         private void OnIniciarPartida()
         {
@@ -2394,6 +2603,7 @@ private void AsegurarCursorVisible()
             nombreArchivoAntesDeEditarHistorial = "";
             modoEliminarActivo = false;
 
+            GuardarHistorialEnDisco();
             ReconstruirListaHistorial();
             ActualizarBotonEliminarScript();
             ActualizarEtiquetaBotonGuardar();
@@ -2414,8 +2624,30 @@ private void AsegurarCursorVisible()
             ActualizarEditorTrasCambio();
             nombreArchivoActual = entrada.nombre;
             entradaEnEdicion = entrada;
+            AplicarSkinDesdeEntrada(entrada);
             ActualizarEtiquetaBotonGuardar();
             ActualizarTextoEstado($"Editando \"{entrada.nombre}\" — puedes ACTUALIZAR o CANCELAR la edición.", esError: false);
+        }
+
+        // Empuja la personalización guardada en la entrada hacia los controles de
+        // "PERSONALIZAR SKIN" (swatches resaltados + vista previa), para que al
+        // tocar un script del Historial se vea de inmediato cómo estaba vestido
+        // ese tanque, en vez de mostrar la última personalización que quedó
+        // seleccionada en pantalla.
+        private void AplicarSkinDesdeEntrada(EntradaHistorial entrada)
+        {
+            seleccionActual["Patron"] = entrada.patron;
+            seleccionActual["Color"] = entrada.color;
+            seleccionActual["Calcomania"] = entrada.calcomania;
+            seleccionActual["Bandera"] = entrada.bandera;
+
+            ResaltarSeleccion("Patron");
+            ResaltarSeleccion("Color");
+            ResaltarSeleccion("Calcomania");
+            ResaltarSeleccion("Bandera");
+
+            RegenerarVisualesPatron();
+            ActualizarVistaPreviaTanque();
         }
 
         private void OnCancelarEdicion()
@@ -2485,6 +2717,7 @@ private void AsegurarCursorVisible()
                 ActualizarEtiquetaBotonGuardar();
             }
 
+            GuardarHistorialEnDisco();
             ReconstruirListaHistorial();
             ActualizarBotonEliminarScript();
             ActualizarTamanoMinimoTablero(scriptsPorTanque.Count);
@@ -2520,7 +2753,7 @@ private void AsegurarCursorVisible()
 
         private static readonly (string grupo, int cantidad)[] CategoriasSkin =
         {
-            ("Patron", 4), ("Color", 4), ("Calcomania", 4), ("Numero", 4), ("Bandera", 5)
+            ("Patron", 6), ("Color", 8), ("Calcomania", 8), ("Bandera", 18)
         };
 
         private void OnCambiarSkin(int direccion)

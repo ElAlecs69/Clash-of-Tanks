@@ -4,7 +4,6 @@ using UnityEngine;
 using TanksGame.Core;
 using TanksGame.Language;
 using TanksGame.Visual;
-using TanksGame.CameraControl;
 
 namespace TanksGame.Gameplay
 {
@@ -104,7 +103,6 @@ namespace TanksGame.Gameplay
             {
                 vistaTablero.Construir(board.Width, board.Height);
                 RefrescarVista();
-                CentrarCamaraEnTablero();
             }
         }
 
@@ -289,128 +287,15 @@ namespace TanksGame.Gameplay
 
             vistaTablero.ActualizarTanques(datos, animarMovimiento);
         }
-        // El multiplicador fijo (x1.6) que había antes no tenía en cuenta el
-        // tamaño real de la cámara ortográfica ni el aspecto de pantalla, así
-        // que acertaba más o menos para un tamaño de tablero concreto y se
-        // quedaba corto en otros (por ejemplo 20x20, que quedaba cortado por
-        // los bordes). Ahora se calcula el tamaño ortográfico mínimo real,
-        // con trigonometría simple (sin FOV: en Orthographic no hay
-        // perspectiva), para que el círculo que envuelve todo el tablero
-        // entre en el encuadre, tanto en vertical como en horizontal según
-        // el aspecto de pantalla.
-        // IMPORTANTE: este método asume que la Camera es Orthographic (así
-        // está configurada la Main Camera del proyecto). Antes había también
-        // una rama para cámara en perspectiva basada en fieldOfView; se quitó
-        // por completo -- nunca se usaba con la cámara real de la escena.
-        //
-        // Estos valores DEBEN coincidir con los que usa GameplayUI para armar
-        // los recuadros de estadísticas (tamanoPanelTanque, margenBorde,
-        // espacioEntrePaneles y el máximo de 3 recuadros por lado, repartidos
-        // en fila arriba + uno solo abajo -- ver
-        // GameplayUI.CalcularPosicionPanel()). Se duplican acá (en vez de
-        // referenciar GameplayUI directamente) porque CentrarCamaraEnTablero()
-        // corre en Awake(), antes de que GameplayUI.Start() arme esos recuadros.
-        private const int MAX_TANQUES_POR_LADO_HUD = 3;
-        private const float ANCHO_PANEL_HUD = 300f;
-        private const float ALTO_PANEL_HUD = 200f;
-        private const float ESPACIO_PANEL_HUD = 20f;
-        private const float MARGEN_BORDE_HUD = 20f;
 
-        [Header("Ajuste fino de encuadre de cámara")]
-        [Tooltip("Cuántas 'casillas' (tamanoCelda) se sube el punto que mira la cámara. Sube el punto de mira -> el tablero se ve más abajo en pantalla.")]
-        public float desplazamientoAbajoCeldas = 1f;
-        [Tooltip("Cuántas 'casillas' se corre el punto de mira hacia la izquierda en pantalla -> el tablero se ve desplazado hacia la derecha.")]
-        public float desplazamientoDerechaCeldas = 3f;
-
-        private void CentrarCamaraEnTablero()
-        {
-            var camaraOrbit = FindFirstObjectByType<OrbitZoomCamera>();
-            if (camaraOrbit == null)
-            {
-                Debug.LogWarning("CentrarCamaraEnTablero: no se encontró ningún OrbitZoomCamera en la escena -- el encuadre NO se aplicó.");
-                return;
-            }
-
-            var camaraUnity = camaraOrbit.GetComponent<Camera>();
-            if (camaraUnity == null || !camaraUnity.orthographic)
-            {
-                Debug.LogWarning("CentrarCamaraEnTablero: la Camera no está en modo Orthographic -- este método fue simplificado para trabajar solo en ese modo, el encuadre NO se aplicó.");
-                return;
-            }
-
-            float lado = vistaTablero.tamanoCelda;
-            var centro = new Vector3((board.Width - 1) * lado * 0.5f, 0f,
-                (board.Height - 1) * lado * 0.5f);
-
-            // "Derecha en pantalla" según el yaw inicial (45°) de la cámara
-            // isométrica -- ver OrbitZoomCamera.yaw. Se usa este valor fijo (en
-            // vez de leer el yaw actual del componente) porque este método
-            // corre en Awake(), antes de que el jugador haya podido orbitar
-            // la cámara con el botón derecho.
-            var derechaEnPantalla = Quaternion.Euler(0f, 45f, 0f) * Vector3.right;
-
-            var centroAjustado = centro
-                + Vector3.up * (desplazamientoAbajoCeldas * lado)
-                - derechaEnPantalla * (desplazamientoDerechaCeldas * lado);
-
-            camaraOrbit.PanTo(centroAjustado);
-
-            // Radio de la circunferencia que envuelve el tablero completo,
-            // con un 15% extra de margen para que no quede pegado al borde
-            // de la pantalla.
-            float radioTablero = 0.5f * lado *
-                Mathf.Sqrt(board.Width * board.Width + board.Height * board.Height) * 1.15f;
-
-            // Los recuadros de estadísticas ya NO se apilan en columna: hasta
-            // dos por lado van arriba, uno al lado del otro (fila horizontal),
-            // y un tercero (si lo hay) va solo, abajo -- ver
-            // GameplayUI.CalcularPosicionPanel(). Acá se calcula qué fracción
-            // de la pantalla les queda libre al tablero, en cada eje, y se
-            // exige que el tablero entre en esa fracción en vez de en la
-            // pantalla completa.
-            int totalTanques = Mathf.Min(agents?.Count ?? 0, MAX_TANQUES_POR_LADO_HUD * 2);
-            int porLado = Mathf.Min(MAX_TANQUES_POR_LADO_HUD, Mathf.CeilToInt(totalTanques / 2f));
-            bool hayPanelAbajo = porLado >= 3; // el tercer tanque de algún lado cae solo, abajo.
-
-            // Horizontal: cuando un lado tiene 2 o más tanques, esos dos
-            // primeros quedan uno junto al otro (fila), así que el ancho que
-            // ocupan en ese borde es el de DOS recuadros, no de uno solo.
-            int panelesEnFila = Mathf.Min(porLado, 2);
-            float margenHorizontalPx = MARGEN_BORDE_HUD
-                + panelesEnFila * ANCHO_PANEL_HUD
-                + Mathf.Max(0, panelesEnFila - 1) * ESPACIO_PANEL_HUD
-                + 20f; // + un respiro extra
-
-            // Vertical: como ya no hay columnas apiladas, cada borde (arriba y,
-            // si corresponde, abajo) ocupa como mucho la altura de UN recuadro.
-            float margenVerticalUnaFilaPx = MARGEN_BORDE_HUD + ALTO_PANEL_HUD + 20f;
-
-            float anchoPantalla = Mathf.Max(1, Screen.width);
-            float altoPantalla = Mathf.Max(1, Screen.height);
-
-            // Los recuadros ocupan ambos bordes IZQUIERDO/DERECHO a la vez, así
-            // que se descuenta el doble del margen horizontal. En vertical se
-            // descuenta el margen de arriba siempre, y el de abajo solo si
-            // efectivamente hay un tercer recuadro colgando del borde inferior.
-            float margenVerticalTotalPx = margenVerticalUnaFilaPx * (hayPanelAbajo ? 2f : 1f);
-
-            float fraccionHorizontalLibre = Mathf.Clamp((anchoPantalla - 2f * margenHorizontalPx) / anchoPantalla, 0.35f, 1f);
-            float fraccionVerticalLibre = Mathf.Clamp((altoPantalla - margenVerticalTotalPx) / altoPantalla, 0.35f, 1f);
-
-            // En Orthographic, "orthographicSize" es la MITAD de lo que se ve
-            // verticalmente, en unidades de mundo; lo que se ve horizontalmente
-            // es orthographicSize * aspect. Para que el círculo del tablero
-            // (radioTablero) entre en cada eje, respetando además la fracción
-            // libre que dejan los recuadros de estadísticas:
-            float sizeVertical = radioTablero / fraccionVerticalLibre;
-            float sizeHorizontal = (radioTablero / Mathf.Max(0.01f, camaraUnity.aspect)) / fraccionHorizontalLibre;
-            float sizeNecesario = Mathf.Max(sizeVertical, sizeHorizontal);
-
-            // SetOrthographicSize ya sube maxOrthographicSize si hace falta
-            // (para que un tablero grande, como 20x20, no quede topado por el
-            // límite configurado en el Inspector) y clampea contra
-            // minOrthographicSize/maxOrthographicSize.
-            camaraOrbit.SetOrthographicSize(sizeNecesario);
-        }
+        // NOTA: el encuadre de la cámara ya NO se calcula aquí. Antes había un
+        // segundo sistema de cámara en este archivo (CentrarCamaraEnTablero(),
+        // apoyado en un componente OrbitZoomCamera aparte) que competía cada
+        // frame con el ajuste automático que ya hace BoardView.Construir() ->
+        // AjustarCamaraAlTablero() sobre la misma Main Camera ortográfica,
+        // dando resultados erráticos según cuál de los dos "ganara" ese
+        // frame. Se eliminó por completo ese sistema (y el componente
+        // OrbitZoomCamera) para quedarnos con una sola fuente de verdad: la
+        // cámara ortográfica fija que configura BoardView.
     }
 }
