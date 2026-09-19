@@ -168,6 +168,18 @@ namespace TanksGame.UI
         // tenía cómo pintar cada tanque distinto.
         private readonly List<TanqueSkinDatos> skinsPorTanque = new List<TanqueSkinDatos>();
 
+        // En paralelo a scriptsPorTanque/skinsPorTanque (mismo índice = mismo
+        // tanque): a qué EntradaHistorial corresponde cada tanque programado EN
+        // ESTA PARTIDA. El Historial (panel izquierdo) es PERMANENTE y puede
+        // traer entradas de sesiones anteriores que nunca se tocaron en la
+        // partida actual -- por eso no se puede usar la posición de una entrada
+        // dentro de "historial" para indexar scriptsPorTanque/skinsPorTanque
+        // (esas dos listas solo tienen los tanques de ESTA sesión). Esta lista
+        // paralela permite, dada una EntradaHistorial cualquiera (vieja o
+        // nueva), saber con certeza si es uno de los tanques ya programados
+        // ahora y en qué posición, buscando por REFERENCIA en vez de por índice.
+        private readonly List<EntradaHistorial> entradasProgramadasEstaPartida = new List<EntradaHistorial>();
+
         // Control de tamaño de tablero (NxN): ahora vive como un "slot" más dentro de
         // la fila de botones de acción (ver ConstruirControlTamanoTableroCompacto).
         private int tamanoTablero;
@@ -285,6 +297,17 @@ namespace TanksGame.UI
 
                 historial.Clear();
                 historial.AddRange(datos.entradas);
+
+                // scriptsPorTanque/skinsPorTanque/entradasProgramadasEstaPartida
+                // representan los tanques programados PARA LA PRÓXIMA PARTIDA, no
+                // el Historial completo (que es permanente y acumula entradas de
+                // TODAS las sesiones). Deben arrancar vacíos en cada sesión nueva
+                // -- si se llenaran con todo el Historial acá, "cantidadMaximaTanques"
+                // se alcanzaría con tanques viejos que no tienen nada que ver con
+                // la partida que estás por armar ahora.
+                scriptsPorTanque.Clear();
+                skinsPorTanque.Clear();
+                entradasProgramadasEstaPartida.Clear();
             }
             catch (Exception e)
             {
@@ -419,6 +442,9 @@ namespace TanksGame.UI
             ConstruirBarraSuperior(canvasGo.transform);
 
             tamanoTablero = tamanoTableroInicial;
+            // Con el fix de arriba, scriptsPorTanque ya puede venir con contenido
+            // recargado desde el Historial en disco (no solo lo agregado en esta
+            // sesión), así que el tablero mínimo debe considerarlo desde el arranque.
             ActualizarTamanoMinimoTablero(scriptsPorTanque.Count);
 
             ConstruirPanelHistorial(canvasGo.transform);
@@ -2373,15 +2399,23 @@ private void AsegurarCursorVisible()
         // (Windows/Linux/macOS) guardar ese .txt para futuras partidas.
         private void ExportarEntradaHistorialAMaquina(EntradaHistorial entrada)
         {
-            overlayNombreArchivo.SetActive(false);
-
+            // Antes esto cerraba el overlay ANTES de abrir el diálogo nativo. Como
+            // el diálogo es modal/bloqueante, Unity no redibuja hasta que se
+            // cierra -- por eso en pantalla se seguía viendo el overlay mientras el
+            // diálogo nativo estaba abierto (ver captura), pero apenas el jugador
+            // tocaba "Cancelar" en el diálogo nativo, el overlay ya estaba oculto
+            // por dentro y desaparecía de golpe junto con él, sin dar chance de
+            // elegir otro script o de cancelar de verdad desde el propio overlay.
+            // Ahora el overlay se queda abierto si el diálogo nativo se cancela, y
+            // solo se cierra cuando el archivo se guardó de verdad.
             string sugerido = SanearNombreArchivo(entrada.nombre);
             string ruta = SFB.StandaloneFileBrowser.SaveFilePanel("Guardar script como", "", sugerido, "txt");
-            if (string.IsNullOrEmpty(ruta)) return;
+            if (string.IsNullOrEmpty(ruta)) return; // Cancelado en el diálogo nativo: el overlay sigue abierto.
 
             try
             {
                 File.WriteAllText(ruta, entrada.contenido);
+                overlayNombreArchivo.SetActive(false);
                 ActualizarTextoEstado($"Guardado en \"{ruta}\"", esError: false);
             }
             catch (Exception e)
@@ -2468,6 +2502,7 @@ private void AsegurarCursorVisible()
 
             scriptsPorTanque.Add(texto);
             skinsPorTanque.Add(skinElegida);
+            entradasProgramadasEstaPartida.Add(entrada);
             ActualizarTamanoMinimoTablero(tanquesProgramados);
 
             campoEditor.text = "";
@@ -2501,14 +2536,20 @@ private void AsegurarCursorVisible()
         // ahí confundía, porque parecía que seguías editando ese mismo tanque.
         private void ActualizarTanqueExistente(string texto)
         {
-            int indice = historial.IndexOf(entradaEnEdicion);
-            if (indice < 0)
+            // "entradasProgramadasEstaPartida" solo tiene los tanques que YA
+            // cuentan para la partida en curso. Si el tanque que se está
+            // editando es uno VIEJO del Historial permanente que todavía no
+            // había sido "programado" en esta sesión (por ejemplo, el jugador
+            // lo tocó en el Historial solo para revisar/editar su script),
+            // indice da -1 acá. Antes ese caso se trataba como "crear un
+            // tanque nuevo" (OnGuardarScriptDelTanque), lo que generaba una
+            // entrada DUPLICADA en vez de actualizar la original. Ahora, si
+            // hay espacio disponible, se actualiza la entrada original en su
+            // lugar y de paso se la suma a los tanques de esta partida.
+            int indice = entradasProgramadasEstaPartida.IndexOf(entradaEnEdicion);
+            if (indice < 0 && scriptsPorTanque.Count >= cantidadMaximaTanques)
             {
-                // La entrada ya no existe (por ejemplo, se borró mientras se
-                // editaba): se trata como un tanque nuevo, para no perder lo escrito.
-                entradaEnEdicion = null;
-                ActualizarEtiquetaBotonGuardar();
-                OnGuardarScriptDelTanque();
+                ActualizarTextoEstado($"Ya programaste el máximo de {cantidadMaximaTanques} tanques para esta partida", esError: true);
                 return;
             }
 
@@ -2519,10 +2560,20 @@ private void AsegurarCursorVisible()
             entradaEnEdicion.color = skinActualizada.Color;
             entradaEnEdicion.calcomania = skinActualizada.Calcomania;
             entradaEnEdicion.bandera = skinActualizada.Bandera;
-            if (indice < scriptsPorTanque.Count)
+
+            if (indice >= 0)
+            {
                 scriptsPorTanque[indice] = texto;
-            if (indice < skinsPorTanque.Count)
                 skinsPorTanque[indice] = skinActualizada;
+            }
+            else
+            {
+                // Tanque viejo que recién ahora pasa a contar para esta partida.
+                scriptsPorTanque.Add(texto);
+                skinsPorTanque.Add(skinActualizada);
+                entradasProgramadasEstaPartida.Add(entradaEnEdicion);
+                ActualizarTamanoMinimoTablero(scriptsPorTanque.Count);
+            }
 
             string nombreTanque = entradaEnEdicion.nombre;
             entradaEnEdicion = null;
@@ -2598,6 +2649,7 @@ private void AsegurarCursorVisible()
             historial.Clear();
             scriptsPorTanque.Clear(); // antes esto quedaba desincronizado: el Historial se vaciaba pero los tanques seguían "programados".
             skinsPorTanque.Clear();
+            entradasProgramadasEstaPartida.Clear();
             entradaEnEdicion = null;
             textoEditorAntesDeEditarHistorial = "";
             nombreArchivoAntesDeEditarHistorial = "";
@@ -2695,19 +2747,26 @@ private void AsegurarCursorVisible()
             ReconstruirListaHistorial();
         }
 
-        // Borra un tanque puntual: lo saca del Historial y, por índice, de
-        // scriptsPorTanque/skinsPorTanque (antes se buscaba por el contenido
-        // exacto del script, lo que podía borrar el tanque equivocado si dos
-        // tanques tenían el mismo programa).
+        // Borra un tanque puntual del Historial (permanente). Si además
+        // corresponde a uno de los tanques ya programados PARA ESTA PARTIDA
+        // (puede ser uno nuevo recién guardado, o uno viejo del Historial que
+        // el jugador volvió a cargar/reprogramar ahora), también se saca de
+        // scriptsPorTanque/skinsPorTanque -- ubicándolo por REFERENCIA con
+        // entradasProgramadasEstaPartida, no por índice numérico (ver el
+        // comentario junto a esa lista: los índices de "historial" y de
+        // "scriptsPorTanque" no tienen por qué coincidir, porque el Historial
+        // es permanente y mezcla tanques de otras sesiones).
         private void OnEliminarTanque(EntradaHistorial entrada)
         {
-            int indice = historial.IndexOf(entrada);
-
             historial.Remove(entrada);
-            if (indice >= 0 && indice < scriptsPorTanque.Count)
-                scriptsPorTanque.RemoveAt(indice);
-            if (indice >= 0 && indice < skinsPorTanque.Count)
-                skinsPorTanque.RemoveAt(indice);
+
+            int indiceSesion = entradasProgramadasEstaPartida.IndexOf(entrada);
+            if (indiceSesion >= 0)
+            {
+                entradasProgramadasEstaPartida.RemoveAt(indiceSesion);
+                scriptsPorTanque.RemoveAt(indiceSesion);
+                skinsPorTanque.RemoveAt(indiceSesion);
+            }
 
             if (entradaEnEdicion == entrada)
             {

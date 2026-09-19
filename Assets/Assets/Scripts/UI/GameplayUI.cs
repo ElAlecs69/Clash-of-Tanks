@@ -528,7 +528,7 @@ namespace TanksGame.UI
                 ? 0
                 : Mathf.RoundToInt(indiceCalidad * (totalNivelesReales - 1) / 2f);
 
-            QualitySettings.SetQualityLevel(nivelReal, applyExpensiveChanges: false);
+            QualitySettings.SetQualityLevel(nivelReal, applyExpensiveChanges: true);
         }
 
         // ------------------------------------------------------------------

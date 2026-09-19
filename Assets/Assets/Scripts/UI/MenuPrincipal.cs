@@ -789,14 +789,23 @@ namespace TanksGame.UI
             var fondo = ventana.AddComponent<Image>();
 
             var rect = ventana.GetComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.sizeDelta = new Vector2(AnchoPanelGrande, AltoPanelGrande);
-            rect.anchoredPosition = Vector2.zero;
 
             if (fondoPersonalizado != null)
             {
+                // Antes esta ventana usaba SIEMPRE el tamaño fijo de "ventana"
+                // (AnchoPanelGrande x AltoPanelGrande, pensado para el panel
+                // rojo con degradado generado por código) incluso cuando se le
+                // pasaba una imagen de fondo propia -- por eso esa imagen se
+                // veía "recortada"/con marco, sin cubrir toda la pantalla.
+                // Con fondo personalizado la ventana pasa a estirarse a
+                // pantalla completa (igual que ya hace el panel de Opciones
+                // con "fondoOpciones"), y la imagen cubre todo el área.
+                rect.anchorMin = Vector2.zero;
+                rect.anchorMax = Vector2.one;
+                rect.pivot = new Vector2(0.5f, 0.5f);
+                rect.offsetMin = Vector2.zero;
+                rect.offsetMax = Vector2.zero;
+
                 // Con imagen propia no se agrega el degradado rojo generado por código:
                 // se vería encima de tu arte y lo taparía/desentonaría.
                 fondo.sprite = fondoPersonalizado;
@@ -806,6 +815,12 @@ namespace TanksGame.UI
             }
             else
             {
+                rect.anchorMin = new Vector2(0.5f, 0.5f);
+                rect.anchorMax = new Vector2(0.5f, 0.5f);
+                rect.pivot = new Vector2(0.5f, 0.5f);
+                rect.sizeDelta = new Vector2(AnchoPanelGrande, AltoPanelGrande);
+                rect.anchoredPosition = Vector2.zero;
+
                 fondo.color = ColorFondoPanel;
 
                 var degradadoGo = new GameObject("Degradado");

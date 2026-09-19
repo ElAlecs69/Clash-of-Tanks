@@ -141,6 +141,20 @@ namespace TanksGame.Visual
         private float _zoomOrthoMinLimite;
         private float _zoomOrthoMaxLimite;
 
+        // Punto de referencia (posición XZ) contra el que se mide cuánto se
+        // alejó el jugador al arrastrar la cámara -- ver el comentario grande
+        // en ActualizarCamaraLibre sobre por qué NO puede ser '_centroTablero'.
+        private Vector3 _posicionLibreInicial;
+        private bool _posicionLibreInicialCapturada;
+
+        // Factor de encuadre (orthographicSize / _orthoSizeReferencia) que
+        // AjustarCamaraAlTablero calculó para el tablero actual -- es decir,
+        // el zoom EXACTO con el que arranca la cámara para este tablero en
+        // particular. ConfigurarLimitesCamaraLibre lo usa como techo del
+        // alejamiento manual (ver comentario ahí): no tendría sentido dejar
+        // alejarse más allá de "donde empezó la cámara".
+        private float _factorEncuadreActual = 1f;
+
         private float superficieCeldaMundoY;
         private bool superficieCalculada;
 
@@ -342,6 +356,7 @@ namespace TanksGame.Visual
 
             float ladoActual = Mathf.Max(ancho, alto) * tamanoCelda;
             float factor = (ladoActual / _ladoReferenciaCamara) * margenExtraCamara;
+            _factorEncuadreActual = factor;
 
             // 'correccionCentroCamara' es un ajuste manual, en unidades de
             // mundo, para el punto que la cámara usa como centro del
@@ -394,6 +409,12 @@ namespace TanksGame.Visual
             if (camara.orthographic)
             {
                 camara.orthographicSize = _orthoSizeReferencia * factor;
+                // Sincroniza el objetivo del zoom suavizado con el encuadre recién
+                // calculado, para que un tablero nuevo (nueva partida) no herede
+                // el objetivo de zoom de la partida anterior y "tironee" la
+                // cámara de golpe hacia ese valor viejo en el primer frame.
+                _zoomObjetivoActual = camara.orthographicSize;
+                _zoomVelocidadActual = 0f;
             }
             else if (ajustarCampoDeVisionTambien)
             {
@@ -441,9 +462,31 @@ namespace TanksGame.Visual
             _panLimiteRadio = Mathf.Sqrt(_mitadAncho * _mitadAncho + _mitadAlto * _mitadAlto) * 1.1f;
 
             float factorCercano = (3f * tamanoCelda / _ladoReferenciaCamara) * margenExtraCamara;
-            float factorLejano = (20f * tamanoCelda / _ladoReferenciaCamara) * margenExtraCamara;
             _zoomOrthoMinLimite = _orthoSizeReferencia * factorCercano;
-            _zoomOrthoMaxLimite = _orthoSizeReferencia * factorLejano;
+
+            // ANTES: el techo de alejamiento (_zoomOrthoMaxLimite) se calculaba
+            // con un "factorLejano" FIJO, como si el tablero siempre fuera de
+            // 20x20 -- para cualquier tablero más chico que ese, ese techo
+            // quedaba por ENCIMA del encuadre inicial real (AjustarCamaraAlTablero,
+            // que ya guardó su resultado en '_factorEncuadreActual'), así que la
+            // rueda del mouse dejaba seguir alejando la cámara más allá de "donde
+            // arrancó" -- de ahí que se viera el tablero cada vez más chico sin
+            // tope real y, al arrastrar con el cursor en ese estado, el radio de
+            // paneo efectivo (que escala con el zoom, ver ActualizarCamaraLibre)
+            // quedara desproporcionado y la cámara se saliera del encuadre
+            // calibrado ("se buguea").
+            //
+            // Ahora el techo es dinámico y coincide EXACTAMENTE con el zoom
+            // inicial de este tablero (el mismo factor que ya usó
+            // AjustarCamaraAlTablero): no se puede alejar más de donde la
+            // cámara ya empezó.
+            _zoomOrthoMaxLimite = _orthoSizeReferencia * _factorEncuadreActual;
+
+            // Nuevo tablero -> la próxima vez que ActualizarCamaraLibre corra
+            // tiene que volver a capturar la posición inicial real de ESTA
+            // cámara (ver comentario en ActualizarCamaraLibre), no seguir
+            // usando la del tablero anterior.
+            _posicionLibreInicialCapturada = false;
         }
 
         // Paneo (arrastrar con el botón central del mouse) + zoom (rueda) de la
@@ -470,20 +513,78 @@ namespace TanksGame.Visual
             var mouse = Mouse.current;
             if (mouse == null) return;
 
+            // Primera vez que corre tras un tablero nuevo: guarda la posición
+            // XZ real con la que AjustarCamaraAlTablero dejó a la cámara
+            // (que NO está cerca de '_centroTablero' -- está a la distancia
+            // de encuadre isométrico, offset*factor, calculada ahí --, así
+            // que el radio de paneo se mide desde ACÁ, no desde el centro del
+            // tablero).
+            //
+            // ESTE ERA EL BUG DE FONDO ("se mueve para arriba y no deja
+            // bajar"): antes, ClamparDentroDeLimitesDePaneo medía la
+            // distancia de la cámara a '_centroTablero' directamente. Pero la
+            // cámara, para verse isométrica, arranca calibrada a bastante más
+            // distancia del centro del tablero (offset fijo, ver
+            // CalibrarCamaraSiHaceFalta) que '_panLimiteRadio' (que es chico
+            // a propósito, ~1.1x la diagonal del tablero). Entonces, apenas
+            // el jugador arrastraba UNA SOLA VEZ, el clamp veía "distancia >
+            // radioEfectivo" (porque la distancia INICIAL ya era mayor) y de
+            // golpe arrastraba la posición X/Z de la cámara hasta pegarla a
+            // ese radio chico, sin tocar ni la altura (Y) ni la rotación fija
+            // -- el resultado es la cámara mirando desde muy cerca del centro
+            // pero con el mismo ángulo/altura calibrados para verla desde
+            // lejos: exactamente el acercamiento brusco a las montañas que se
+            // ve en pantalla. Y como cada arrastre posterior volvía a quedar
+            // pegado a ese mismo radio chico, no había forma de "volver".
+            //
+            // Midiendo en cambio desde la posición inicial real de la cámara,
+            // el paneo empieza en distancia 0 (sin clamp) y solo se limita
+            // cuánto te alejás DESDE ahí, que es lo que se quiso hacer
+            // siempre.
+            if (!_posicionLibreInicialCapturada)
+            {
+                _posicionLibreInicial = objetivo.position;
+                _posicionLibreInicialCapturada = true;
+            }
+
+            // El objetivo de zoom arranca en el tamaño ortográfico actual (el
+            // que ya fijó AjustarCamaraAlTablero), para no "saltar" apenas
+            // empieza la partida, antes de que el jugador toque la rueda.
+            if (_zoomObjetivoActual < 0f)
+                _zoomObjetivoActual = camara.orthographicSize;
+
             if (camara.orthographic)
             {
                 float scroll = mouse.scroll.ReadValue().y;
                 if (Mathf.Abs(scroll) > 0.001f)
                 {
-                    camara.orthographicSize = Mathf.Clamp(
-                        camara.orthographicSize - scroll * 0.01f,
+                    // Subido de 0.045 a 0.07: el zoom seguía sintiéndose lento
+                    // porque, además, dependía de Time.deltaTime (ver abajo).
+                    float objetivoZoom = Mathf.Clamp(
+                        camara.orthographicSize - scroll * camara.orthographicSize * 0.07f,
                         _zoomOrthoMinLimite, _zoomOrthoMaxLimite);
+                    _zoomObjetivoActual = objetivoZoom;
                 }
             }
 
-            // Botón central para no pisar el click izquierdo (UI/selección) ni
-            // un eventual click derecho de otra acción.
-            if (mouse.middleButton.isPressed)
+            if (Mathf.Abs(camara.orthographicSize - _zoomObjetivoActual) > 0.0001f)
+            {
+                // Time.deltaTime se congela si el juego está en pausa
+                // (Time.timeScale = 0, ej. el botón de pausa de la partida) --
+                // con eso el SmoothDamp anterior se quedaba "trabado" sin
+                // aplicar el zoom aunque el valor objetivo sí cambiara, dando
+                // la sensación de que el zoom seguía lento o no respondía del
+                // todo. Con el tiempo NO escalado, la cámara sigue
+                // respondiendo esté pausado el juego o no.
+                camara.orthographicSize = Mathf.SmoothDamp(
+                    camara.orthographicSize, _zoomObjetivoActual, ref _zoomVelocidadActual, 0.08f,
+                    Mathf.Infinity, Time.unscaledDeltaTime);
+            }
+
+            // Paneo libre: arrastrar con el click IZQUIERDO (como en Clash of
+            // Clans) o con el botón central (para quien ya se acostumbró a ese).
+            bool arrastrando = mouse.leftButton.isPressed || mouse.middleButton.isPressed;
+            if (arrastrando)
             {
                 var delta = mouse.delta.ReadValue();
                 if (delta.sqrMagnitude > 0.0001f)
@@ -491,29 +592,74 @@ namespace TanksGame.Visual
                     Vector3 derecha = objetivo.right; derecha.y = 0f; derecha.Normalize();
                     Vector3 adelante = objetivo.forward; adelante.y = 0f; adelante.Normalize();
 
-                    // La velocidad escala con el zoom actual: paneás más rápido
-                    // (en unidades de mundo) cuando estás más alejado, como se
-                    // espera de una cámara así.
-                    float velocidad = camara.orthographicSize * 0.0025f;
+                    float velocidad = camara.orthographicSize * 0.006f;
                     Vector3 desplazamiento = (-derecha * delta.x - adelante * delta.y) * velocidad;
 
                     Vector3 nuevaPosicion = objetivo.position + desplazamiento;
-                    ClamparDentroDeLimitesDePaneo(ref nuevaPosicion);
+
+                    // ANTES (dos bugs encadenados):
+                    // 1) El radio de paneo permitido escalaba con
+                    //    'orthographicSize / _orthoSizeReferencia', pero
+                    //    '_orthoSizeReferencia' es el tamaño ortográfico del
+                    //    tablero de CALIBRACIÓN (10x10, fijo), no el de este
+                    //    tablero. Para cualquier tablero más grande que 10x10
+                    //    (como el 10x12 de esta escena), el zoom INICIAL ya
+                    //    arrancaba con esa razón por encima de 1 -- es decir,
+                    //    el radio quedaba "inflado" desde el primer frame,
+                    //    sin que el jugador tocara la rueda del mouse para
+                    //    nada.
+                    // 2) Ese radio inflado crecía todavía más si el jugador
+                    //    alejaba el zoom, así que arrastrar con el cursor
+                    //    (sobre todo cerca del borde) sacaba fácilmente al
+                    //    pivote de la cámara hasta pegarlo contra -- o
+                    //    directamente dentro de -- el anillo de montañas: con
+                    //    la cámara en un ángulo bajo (~26°), eso se ve como un
+                    //    acercamiento brusco a picos de montaña llenando toda
+                    //    la pantalla, sin poder "bajar" de ahí (la vista
+                    //    correcta del tablero) porque el borde permitido
+                    //    seguía siendo mayor de lo que debía.
+                    //
+                    // Ahora se divide por '_zoomOrthoMaxLimite', que es
+                    // justamente el tamaño ortográfico INICIAL calculado para
+                    // ESTE tablero (ver AjustarCamaraAlTablero /
+                    // ConfigurarLimitesCamaraLibre) -- y, con el techo de zoom
+                    // ya limitado a ese mismo valor (no se puede alejar más
+                    // allá de donde arrancó la cámara), esta razón nunca pasa
+                    // de 1. El radio efectivo queda entonces CONSTANTE en
+                    // '_panLimiteRadio' durante toda la partida, sin importar
+                    // el zoom.
+                    float radioEfectivo = _panLimiteRadio *
+                        Mathf.Max(1f, camara.orthographicSize / Mathf.Max(_zoomOrthoMaxLimite, 0.01f));
+
+                    ClamparDentroDeLimitesDePaneo(ref nuevaPosicion, radioEfectivo);
                     objetivo.position = nuevaPosicion;
                 }
             }
         }
 
-        private void ClamparDentroDeLimitesDePaneo(ref Vector3 posicion)
+        // Estado del suavizado de zoom (SmoothDamp necesita "recordar" la
+        // velocidad actual entre frames y a dónde se está dirigiendo el valor).
+        private float _zoomObjetivoActual = -1f;
+        private float _zoomVelocidadActual;
+
+        private void ClamparDentroDeLimitesDePaneo(ref Vector3 posicion, float radioEfectivo)
         {
-            float dx = posicion.x - _centroTablero.x;
-            float dz = posicion.z - _centroTablero.z;
+            // Medido desde '_posicionLibreInicial' (la posición XZ real con
+            // la que arrancó la cámara para este tablero), NO desde
+            // '_centroTablero' -- ver el comentario grande en
+            // ActualizarCamaraLibre. El tablero puede estar a más de
+            // 'radioEfectivo' de distancia de la cámara (así se ve
+            // isométrica), así que anclar el clamp al centro del tablero
+            // sacaba a la cámara de su posición calibrada apenas se
+            // arrastraba una vez.
+            float dx = posicion.x - _posicionLibreInicial.x;
+            float dz = posicion.z - _posicionLibreInicial.z;
             float distancia = Mathf.Sqrt(dx * dx + dz * dz);
-            if (distancia > _panLimiteRadio && distancia > 0.0001f)
+            if (distancia > radioEfectivo && distancia > 0.0001f)
             {
-                float escala = _panLimiteRadio / distancia;
-                posicion.x = _centroTablero.x + dx * escala;
-                posicion.z = _centroTablero.z + dz * escala;
+                float escala = radioEfectivo / distancia;
+                posicion.x = _posicionLibreInicial.x + dx * escala;
+                posicion.z = _posicionLibreInicial.z + dz * escala;
             }
         }
 
@@ -1574,6 +1720,35 @@ namespace TanksGame.Visual
             return _shaderEstandarCache;
         }
 
+        // Asigna una textura al slot "base" correcto según el shader real que
+        // devolvió ObtenerShaderEstandar(). El causante de que las banderas se
+        // vieran GRISES (planas, sin dibujo) era justamente esto: en este
+        // proyecto (URP) ese shader es "Universal Render Pipeline/Lit", que
+        // usa la propiedad "_BaseMap" -- no "_MainTex". El setter
+        // Material.mainTexture (usado antes acá) sólo escribe en "_MainTex",
+        // así que en un shader URP no hacía nada: la textura de la bandera
+        // nunca llegaba a aplicarse y quedaba el "_BaseColor" gris por
+        // defecto del material nuevo. Con SetTexture("_BaseMap", ...) (y de
+        // paso "_BaseColor" a blanco para no teñir la textura) se pinta
+        // correctamente en URP; para Standard/Diffuse (fallback si el
+        // proyecto no tuviera URP) sí existe "_MainTex", así que ese caso
+        // sigue andando con mainTexture como antes.
+        private static void AplicarTexturaPrincipal(Material material, Texture2D textura)
+        {
+            if (material == null || textura == null) return;
+
+            if (material.HasProperty("_BaseMap"))
+            {
+                material.SetTexture("_BaseMap", textura);
+                if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", Color.white);
+            }
+            else if (material.HasProperty("_MainTex"))
+            {
+                material.mainTexture = textura;
+                if (material.HasProperty("_Color")) material.color = Color.white;
+            }
+        }
+
         // ---------------------------------------------------------------------
         // CAMPAMENTOS
         // ---------------------------------------------------------------------
@@ -1844,8 +2019,7 @@ namespace TanksGame.Visual
                         if (renderer != null)
                         {
                             var colorBase = PaletaSkins.ObtenerColorPrincipal(skin.Color);
-                            renderer.material.mainTexture = PaletaSkins.GenerarTexturaPatron(skin.Patron, colorBase);
-                            renderer.material.color = Color.white;
+                            AplicarTexturaPrincipal(renderer.material, PaletaSkins.GenerarTexturaPatron(skin.Patron, colorBase));
                         }
 
                         // La cápsula de respaldo usa el tamaño de referencia
@@ -1910,6 +2084,13 @@ namespace TanksGame.Visual
     foreach (var renderer in visual.GetComponentsInChildren<Renderer>())
     {
         if (renderer.gameObject.name == "HumoDano") continue;
+        // La bandera y el asta NO deben "quemarse"/oscurecerse con el daño
+        // del tanque como el resto de la chapa -- son un elemento de
+        // identificación (país/equipo) que tiene que seguir siendo legible
+        // sin importar la vida del tanque. Antes este mismo bucle las trataba
+        // como una placa más: apenas el tanque perdía vida, la bandera se
+        // iba tiñendo hacia negro/gris junto con el casco.
+        if (renderer.gameObject.name == "Bandera" || renderer.gameObject.name == "AstaBandera") continue;
 
         renderer.GetPropertyBlock(propBlock);
 
@@ -1974,8 +2155,7 @@ namespace TanksGame.Visual
             {
                 foreach (var material in renderer.materials)
                 {
-                    material.mainTexture = textura;
-                    material.color = Color.white;
+                    AplicarTexturaPrincipal(material, textura);
                 }
             }
 
@@ -2039,21 +2219,11 @@ namespace TanksGame.Visual
             etiquetaGo.transform.SetParent(padreTanque, false);
             etiquetaGo.transform.localPosition = new Vector3(0f, alturaTope + 0.3f * factor, 0f);
 
-            // Placa de fondo oscura + número blanco: máximo contraste posible sin
-            // depender del color/patrón del tanque (antes el número era solo texto
-            // blanco flotando sobre el propio camuflaje del tanque, por eso costaba
-            // verlo). Ambos llevan MiraSiempreACamara para quedar siempre legibles
-            // sin importar cómo gire la cámara (OrbitZoomCamera).
-            var placaGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            placaGo.name = "PlacaNumero";
-            placaGo.transform.SetParent(etiquetaGo.transform, false);
-            placaGo.transform.localScale = new Vector3(0.55f * factor, 0.28f * factor, 1f);
-            var placaCollider = placaGo.GetComponent<Collider>();
-            if (placaCollider != null) Destroy(placaCollider);
-            var placaRenderer = placaGo.GetComponent<Renderer>();
-            placaRenderer.material = new Material(ObtenerShaderEstandar()) { color = new Color(0.04f, 0.04f, 0.04f, 0.92f) };
-            placaRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            placaGo.AddComponent<MiraSiempreACamara>();
+            // Número (texto blanco) flotando sobre el tanque, con billboard
+            // (MiraSiempreACamara) para quedar siempre legible sin importar
+            // cómo gire la cámara (OrbitZoomCamera). Antes tenía una placa
+            // oscura de fondo para dar contraste; se quitó a pedido porque
+            // se confundía con un intento fallido de bandera.
 
             // El número ya no se elige como skin: es el número de orden en que se
             // programó el tanque (1, 2, 3...), pintado aquí para poder identificar
@@ -2116,7 +2286,13 @@ namespace TanksGame.Visual
             banderaGo.transform.localPosition = new Vector3(0.55f, 0.75f, 0f);
 
             const int segmentos = 8;
-            const float anchoBandera = 0.36f, altoBandera = 0.22f;
+            // El material ya se comprobó correcto (ver [DIAG BANDERA]): el
+            // problema no era la textura, era el tamaño. 0.36x0.22 unidades de
+            // mundo es más chico que una rueda del tanque -- a la distancia de
+            // cámara normal del juego, las franjas de color se promedian
+            // visualmente y se leen como un manchón gris en vez de una
+            // bandera reconocible. Se agranda ~2.5x para que sea legible.
+            const float anchoBandera = 3.6f, altoBandera = 2.2f;
             var malla = new Mesh { name = "MallaBandera" };
             var vertices = new Vector3[(segmentos + 1) * 2];
             var uvs = new Vector2[vertices.Length];
@@ -2145,19 +2321,60 @@ namespace TanksGame.Visual
             var filtro = banderaGo.AddComponent<MeshFilter>();
             filtro.mesh = malla;
             var banderaRenderer = banderaGo.AddComponent<MeshRenderer>();
-            banderaRenderer.material = new Material(ObtenerShaderEstandar())
-            {
-                mainTexture = PaletaSkins.GenerarTexturaBandera(indiceBandera)
-            };
+            var materialBandera = new Material(ObtenerShaderEstandar());
+            AplicarTexturaPrincipal(materialBandera, PaletaSkins.GenerarTexturaBandera(indiceBandera));
+            // Cull Off (doble cara): por defecto el shader Lit descarta la
+            // cara trasera (Cull Back). La bandera es una sola lámina de
+            // malla, no un objeto cerrado, así que desde el lado "de atrás"
+            // (según hacia dónde termine rotado el tanque) esa cara trasera
+            // simplemente no se dibujaba -- se veía lo que hay detrás (la
+            // montaña gris/beige del fondo), y de ahí la sensación de
+            // "bandera gris". Con Cull Off la textura se ve desde cualquier
+            // ángulo.
+            if (materialBandera.HasProperty("_Cull"))
+                materialBandera.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off);
+            banderaRenderer.material = materialBandera;
             banderaRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
             var ondeante = banderaGo.AddComponent<BanderaOndeante>();
             ondeante.Inicializar(malla, vertices);
+
+            // IMPORTANTE: un billboard que solo gira en YAW no sirve con una
+            // cámara casi cenital/top-down como la de este juego -- un plano
+            // vertical, gires lo que gires en YAW, se sigue viendo de canto
+            // (un hilo invisible) si la cámara mira casi derecho hacia abajo,
+            // porque el YAW no lo inclina hacia arriba, solo lo rota sobre su
+            // propio eje vertical. Por eso antes "no se veía por nada del
+            // mundo". Hace falta un billboard COMPLETO (mirar de frente a la
+            // cámara en todos los ejes, igual que ya hace el número con
+            // MiraSiempreACamara), para que la cara con el dibujo siempre
+            // esté de frente sin importar el ángulo de la cámara.
+            //
+            // Un billboard completo rota en pitch, no solo en yaw. Si esa
+            // rotación se aplicara directo sobre "banderaGo" mientras sigue
+            // siendo hijo de "astaGo" (que tiene escala NO uniforme:
+            // 0.025/0.28/0.025), el resultado se vería deformado (shear) en
+            // cuanto la rotación dejara de ser puramente vertical -- girar en
+            // pitch dentro de un padre con escala no uniforme distorsiona la
+            // malla. Por eso primero se calcula todo (posición/escala) como
+            // hijo de "astaGo" -para que el tamaño en mundo salga correcto-
+            // y AHORA se reengancha como hijo directo del tanque
+            // (worldPositionStays: true conserva su posición/escala actuales
+            // tal cual, ya sin depender de la escala del asta), donde sí es
+            // seguro rotarlo libremente en cualquier eje sin deformarse.
+            banderaGo.transform.SetParent(padreTanque, true);
+            banderaGo.AddComponent<MiraSiempreACamara>();
         }
 
         // Anima, cuadro a cuadro, los vértices de la malla de una bandera con una
         // onda senoidal que crece desde el asta (vértices en x=0, fijos) hacia la
         // punta -- efecto simple de "bandera ondeando al viento", sin física de tela.
+        // El desplazamiento se aplica en Y (no en Z, "de profundidad"): la bandera
+        // ahora usa billboard completo (MiraSiempreACamara), así que su cara
+        // siempre queda perpendicular a la cámara -- un ondeo en profundidad
+        // (Z) quedaría alineado con la línea de visión y no se notaría. Ondear
+        // en Y sí se ve, porque ese eje queda "dentro" de la cara visible sin
+        // importar el ángulo desde el que se mire.
         private class BanderaOndeante : MonoBehaviour
         {
             private Mesh malla;
@@ -2185,7 +2402,7 @@ namespace TanksGame.Visual
                     // borde pegado al asta quede quieto y la punta ondee más.
                     float amplitud = v.x * 0.09f;
                     float desplazamiento = Mathf.Sin(t + v.x * 9f) * amplitud;
-                    verticesAnimados[i] = new Vector3(v.x, v.y, desplazamiento);
+                    verticesAnimados[i] = new Vector3(v.x, v.y + desplazamiento, 0f);
                 }
                 malla.vertices = verticesAnimados;
                 malla.RecalculateNormals();
