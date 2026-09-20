@@ -19,7 +19,7 @@ MonoBehaviour:
     width: 1920
     height: 997
   m_ShowMode: 4
-  m_Title: Inspector
+  m_Title: Console
   m_RootView: {fileID: 6}
   m_MinSize: {x: 875, y: 300}
   m_MaxSize: {x: 10000, y: 10000}
@@ -598,7 +598,7 @@ MonoBehaviour:
     m_SkipHidden: 0
     m_SearchArea: 1
     m_Folders:
-    - Assets
+    - Assets/Assets/Scripts/UI
     m_Globs: []
     m_ProductIds: 
     m_AnyWithAssetOrigin: 0
@@ -608,7 +608,7 @@ MonoBehaviour:
   m_ViewMode: 1
   m_StartGridSize: 64
   m_LastFolders:
-  - Assets
+  - Assets/Assets/Scripts/UI
   m_LastFoldersGridSize: -1
   m_LastProjectPath: D:\aestradam014\Clash of Tanks
   m_LockTracker:
@@ -617,22 +617,22 @@ MonoBehaviour:
   m_FolderTreeState:
     scrollPos: {x: 0, y: 60}
     m_SelectedIDs:
-    - m_rawData: 568105584918854310
+    - m_rawData: 568105584918860504
     m_LastClickedID:
-      m_rawData: 568105584918854310
+      m_rawData: 568105584918860504
     m_ExpandedIDs:
     - m_rawData: 0
     - m_rawData: 568105584918854368
-    - m_rawData: 568105584918857998
-    - m_rawData: 568105584918858000
-    - m_rawData: 568105584918858002
-    - m_rawData: 568105584918858004
-    - m_rawData: 568105584918858006
-    - m_rawData: 568105584918858008
     - m_rawData: 568105584918858010
     - m_rawData: 568105584918858012
     - m_rawData: 568105584918858014
     - m_rawData: 568105584918858016
+    - m_rawData: 568105584918858018
+    - m_rawData: 568105584918858020
+    - m_rawData: 568105584918858022
+    - m_rawData: 568105584918858024
+    - m_rawData: 568105584918858026
+    - m_rawData: 568105584918858028
     m_RenameOverlay:
       m_UserAcceptedRename: 0
       m_Name: 
@@ -667,16 +667,16 @@ MonoBehaviour:
     m_ExpandedIDs:
     - m_rawData: 0
     - m_rawData: 568105584918854368
-    - m_rawData: 568105584918857998
-    - m_rawData: 568105584918858000
-    - m_rawData: 568105584918858002
-    - m_rawData: 568105584918858004
-    - m_rawData: 568105584918858006
-    - m_rawData: 568105584918858008
     - m_rawData: 568105584918858010
     - m_rawData: 568105584918858012
     - m_rawData: 568105584918858014
     - m_rawData: 568105584918858016
+    - m_rawData: 568105584918858018
+    - m_rawData: 568105584918858020
+    - m_rawData: 568105584918858022
+    - m_rawData: 568105584918858024
+    - m_rawData: 568105584918858026
+    - m_rawData: 568105584918858028
     m_RenameOverlay:
       m_UserAcceptedRename: 0
       m_Name: 
@@ -704,11 +704,10 @@ MonoBehaviour:
       m_Icon: {fileID: 0}
       m_ResourceFile: 
   m_ListAreaState:
-    m_SelectedInstanceIDs:
-    - m_rawData: 568105584918860314
+    m_SelectedInstanceIDs: []
     m_LastClickedEntityId:
-      m_rawData: 568105584918860314
-    m_HadKeyboardFocusLastEvent: 0
+      m_rawData: 0
+    m_HadKeyboardFocusLastEvent: 1
     m_ExpandedInstanceIDs: []
     m_RenameOverlay:
       m_UserAcceptedRename: 0
@@ -841,14 +840,18 @@ MonoBehaviour:
       m_LastClickedID:
         m_rawData: 0
       m_ExpandedIDs:
-      - m_rawData: 568105589213223836
-      - m_rawData: 568105589213285010
-      - m_rawData: 568105589213444050
-      - m_rawData: 568105589213599294
-      - m_rawData: 568105589213601762
+      - m_rawData: 568105589212772032
+      - m_rawData: 568105589212772312
+      - m_rawData: 568105589212773198
+      - m_rawData: 568105589212818708
+      - m_rawData: 568105589212818710
+      - m_rawData: 568105589212828688
+      - m_rawData: 568105589212829574
+      - m_rawData: 568105589212875086
       - m_rawData: 568105589213755972
-      - m_rawData: 568105584918857882
-      - m_rawData: 568105584918857888
+      - m_rawData: 568105584918861498
+      - m_rawData: 568105584918861504
+      - m_rawData: 568105584918867636
       m_RenameOverlay:
         m_UserAcceptedRename: 0
         m_Name: 
@@ -1304,9 +1307,9 @@ MonoBehaviour:
   m_AudioPlay: 0
   m_DebugDrawModesUseInteractiveLightBakingData: 0
   m_Position:
-    m_Target: {x: 19.4091, y: 9.869431, z: -5.7892528}
+    m_Target: {x: 7.7363477, y: 0.7582576, z: 1.3590703}
     speed: 2
-    m_Value: {x: 19.4091, y: 9.869431, z: -5.7892528}
+    m_Value: {x: 7.7363477, y: 0.7582576, z: 1.3590703}
   m_RenderMode: 0
   m_CameraMode:
     drawMode: 0
@@ -1353,13 +1356,13 @@ MonoBehaviour:
     m_gridOpacity: 0.5
     m_NearestPlaneToHandleMode: 0
   m_Rotation:
-    m_Target: {x: 0.21390131, y: -0.40891278, z: 0.07230834, w: 0.88419914}
+    m_Target: {x: 0.14120188, y: -0.5151536, z: 0.058347262, w: 0.8433746}
     speed: 2
-    m_Value: {x: -0.21390131, y: 0.40891278, z: -0.07230834, w: -0.8841992}
+    m_Value: {x: -0.1412019, y: 0.5151536, z: -0.058347262, w: -0.8433746}
   m_Size:
-    m_Target: 0.0008507507
+    m_Target: 0.0006526818
     speed: 2
-    m_Value: 0.0008507507
+    m_Value: 0.0006526818
   m_Ortho:
     m_Target: 0
     speed: 2

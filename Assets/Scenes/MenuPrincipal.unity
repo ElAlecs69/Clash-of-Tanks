@@ -293,7 +293,7 @@ MonoBehaviour:
   duracionAnimacionTitulo: 0.7
   escalaInicialTitulo: 0.6
   fondoOpciones: {fileID: 21300000, guid: 42b5e3cbe7906d44e9f0e258a7e3c6b0, type: 3}
-  fondoCreditos: {fileID: 21300000, guid: ea2cd098faec80744bc58523142c93f5, type: 3}
+  fondoCreditos: {fileID: 21300000, guid: f3b61d14439ec5a458794d22c04bea13, type: 3}
   sonidoClick: {fileID: 8300000, guid: 6ce38d9582242504a8fad6c69ba1e0d7, type: 3}
   sonidoCambio: {fileID: 8300000, guid: 1d4ec4ebc029f914a8864e139064c950, type: 3}
   musicaFondo: {fileID: 8300000, guid: 158cc6e6f686bce4390459c3c9581472, type: 3}

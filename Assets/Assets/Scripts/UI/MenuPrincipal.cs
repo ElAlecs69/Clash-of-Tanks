@@ -158,7 +158,16 @@ namespace TanksGame.UI
             var canvas = canvasGo.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1600, 900);
+            var canvasScaler = canvasGo.GetComponent<CanvasScaler>();
+            canvasScaler.referenceResolution = new Vector2(1600, 900);
+            // matchWidthOrHeight en 0 (por defecto) solo respeta el ANCHO de
+            // referencia: con una ventana/pantalla más ancha que 16:9 el alto
+            // disponible en unidades de canvas se achica por debajo de 900, y
+            // "SALIR" (el botón más bajo de la lista, pegado al borde inferior)
+            // queda recortado fuera de pantalla. 0.5 (balanceado) evita el recorte
+            // en cualquier relación de aspecto, igual que ya usan GameplayUI y
+            // PantallaProgramacionTanques.
+            canvasScaler.matchWidthOrHeight = 0.5f;
             canvasGo.AddComponent<GraphicRaycaster>();
             canvasGo.transform.SetParent(transform, false);
 
@@ -225,7 +234,7 @@ namespace TanksGame.UI
             listaRect.anchorMax = new Vector2(0.5f, 0.5f);
             listaRect.pivot = new Vector2(0.5f, 0.5f);
             listaRect.sizeDelta = new Vector2(440, 350);
-            listaRect.anchoredPosition = new Vector2(0, -230);
+            listaRect.anchoredPosition = new Vector2(0, -215);
 
             CrearBotonDeMenu(listaRect, "INICIAR JUEGO", new Vector2(0, 135), OnIniciarJuego);
             CrearBotonDeMenu(listaRect, "OPCIONES", new Vector2(0, 45), OnOpciones);

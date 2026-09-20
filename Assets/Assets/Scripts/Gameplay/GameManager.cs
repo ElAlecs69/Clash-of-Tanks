@@ -59,6 +59,12 @@ namespace TanksGame.Gameplay
         public IReadOnlyList<TankAgent> Agentes => agents;
         public TurnManager Turno => turnManager;
 
+        // Bioma pedido en ConfiguracionPartidaPendiente (pantalla de "Configurar
+        // partida", después de programar los tanques). Null = no vino nada
+        // pendiente, así que vistaTablero se queda con el bioma que ya tenga
+        // puesto en el Inspector.
+        private BoardView.Bioma? biomaPendiente;
+
         // Se usa Awake() en vez de Start() para garantizar que los tanques ya
         // existan (gameManager.Agentes con datos) antes de que GameplayUI.Start()
         // intente construir un panel por cada uno — Unity ejecuta todos los
@@ -101,6 +107,7 @@ namespace TanksGame.Gameplay
 
             if (vistaTablero != null)
             {
+                if (biomaPendiente.HasValue) vistaTablero.SetBioma(biomaPendiente.Value);
                 vistaTablero.Construir(board.Width, board.Height);
                 RefrescarVista();
             }
@@ -125,7 +132,8 @@ namespace TanksGame.Gameplay
                 {
                     nombre = $"Tanque {i + 1}",
                     programa = scripts[i],
-                    skin = (skins != null && i < skins.Count) ? skins[i] : default
+                    skin = (skins != null && i < skins.Count) ? skins[i] : default,
+                    misilesIniciales = Mathf.Max(1, ConfiguracionPartidaPendiente.MisilesPorTanque)
                 };
             }
 
@@ -135,33 +143,62 @@ namespace TanksGame.Gameplay
             anchoTablero = tamano;
             altoTablero = tamano;
 
+            biomaPendiente = ConfiguracionPartidaPendiente.Bioma;
+
             ConfiguracionPartidaPendiente.Limpiar();
         }
 
-        // Reparte las posiciones iniciales: primero las 4 esquinas del tablero y,
-        // si hacen falta más tanques, los puntos medios de los 4 bordes. Cada tanque
-        // queda orientado hacia el centro del tablero. Ajusta este método si quieres
-        // otra distribución (por ejemplo, en círculo).
+        // Reparte las posiciones iniciales sorteando, para cada tanque, una
+        // celda libre al azar dentro del tablero (sin repetir celda entre
+        // tanques y evitando la casilla del hospital). Cada tanque queda
+        // orientado hacia el centro del tablero, igual que antes. Ajusta
+        // este método si quieres otra distribución (por ejemplo, en las
+        // esquinas o en círculo).
         private List<(Vector2Int posicion, Direction direccion)> CalcularPosicionesIniciales(int cantidad)
         {
-            int maxX = anchoTablero - 1;
-            int maxY = altoTablero - 1;
-            int midX = anchoTablero / 2;
-            int midY = altoTablero / 2;
+            var celdasDisponibles = new List<Vector2Int>();
+            for (int x = 0; x < anchoTablero; x++)
+                for (int y = 0; y < altoTablero; y++)
+                {
+                    var celda = new Vector2Int(x, y);
+                    if (board.IsHospital(celda)) continue;
+                    celdasDisponibles.Add(celda);
+                }
 
-            var candidatos = new List<(Vector2Int posicion, Direction direccion)>
+            // Fisher-Yates: baraja las celdas disponibles para poder tomar
+            // las primeras 'cantidad' como sorteo sin repetición.
+            for (int i = celdasDisponibles.Count - 1; i > 0; i--)
             {
-                (new Vector2Int(0, maxY), Direction.E),     // arriba-izquierda
-                (new Vector2Int(maxX, 0), Direction.O),     // abajo-derecha
-                (new Vector2Int(0, 0), Direction.N),        // abajo-izquierda
-                (new Vector2Int(maxX, maxY), Direction.S),  // arriba-derecha
-                (new Vector2Int(midX, maxY), Direction.S),  // medio-arriba
-                (new Vector2Int(midX, 0), Direction.N),     // medio-abajo
-                (new Vector2Int(0, midY), Direction.E),     // medio-izquierda
-                (new Vector2Int(maxX, midY), Direction.O),  // medio-derecha
-            };
+                int j = Random.Range(0, i + 1);
+                (celdasDisponibles[i], celdasDisponibles[j]) = (celdasDisponibles[j], celdasDisponibles[i]);
+            }
 
-            return candidatos.Take(cantidad).ToList();
+            float centroX = (anchoTablero - 1) / 2f;
+            float centroY = (altoTablero - 1) / 2f;
+
+            var resultado = new List<(Vector2Int posicion, Direction direccion)>();
+            for (int i = 0; i < cantidad && i < celdasDisponibles.Count; i++)
+            {
+                var posicion = celdasDisponibles[i];
+                var direccion = DireccionHaciaCentro(posicion, centroX, centroY);
+                resultado.Add((posicion, direccion));
+            }
+
+            return resultado;
+        }
+
+        // Calcula hacia qué lado (N/S/E/O) debe mirar un tanque para quedar
+        // orientado, aproximadamente, hacia el centro del tablero desde su
+        // posición inicial sorteada.
+        private static Direction DireccionHaciaCentro(Vector2Int posicion, float centroX, float centroY)
+        {
+            float deltaX = centroX - posicion.x;
+            float deltaY = centroY - posicion.y;
+
+            if (Mathf.Abs(deltaX) >= Mathf.Abs(deltaY))
+                return deltaX >= 0 ? Direction.E : Direction.O;
+
+            return deltaY >= 0 ? Direction.S : Direction.N;
         }
 
         public GameResult EjecutarSiguienteTurno()

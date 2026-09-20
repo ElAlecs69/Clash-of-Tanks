@@ -302,17 +302,37 @@ MonoBehaviour:
   spriteIconoHistorial: {fileID: 0}
   carpetaScripts: ScriptsTanques
   nombreEscenaMenuPrincipal: MenuPrincipal
+  nombreEscenaJuego: Juego
   comandosQueRequierenDireccion:
   - MOV
   - AMT
   - RADAR
   - MISIL
-  musicaFondo: {fileID: 0}
+  musicaFondo: {fileID: 8300000, guid: 21f66a6810195e84fbaf958c78a2170b, type: 3}
   volumenMusica: 0.5
   prefabTanquePreview: {fileID: 5869730190961415835, guid: e62a92af76ad5d542aa6053c1b85171a, type: 3}
   rotacionInicialTanque: {x: 10, y: 200, z: 0}
   rotarTanquePreview: 1
   velocidadRotacionPreview: 20
+  partesExcluidasDeSkin:
+  - track
+  - wheel
+  - glass
+  - rueda
+  - oruga
+  - vidrio
+  distanciaInicialCamara: 4.5
+  elevacionInicialCamara: 15
+  distanciaMinCamara: 1.8
+  distanciaMaxCamara: 9
+  velocidadOrbita: 0.3
+  velocidadZoomCamara: 0.6
+  cantidadMinimaTanquesParaJugar: 2
+  cantidadMaximaTanques: 6
+  tamanoTableroInicial: 8
+  previewBiomaPradera: {fileID: 21300000, guid: de77800ba012c0044993b8dc95a021e7, type: 3}
+  previewBiomaNieve: {fileID: 21300000, guid: 19e0ea1ddf1373341b8bf1d96a665a09, type: 3}
+  previewBiomaJungla: {fileID: 21300000, guid: 321f2eede2da7604991a785f9442646e, type: 3}
 --- !u!4 &912054219
 Transform:
   m_ObjectHideFlags: 0

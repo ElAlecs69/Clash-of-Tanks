@@ -122,6 +122,7 @@ namespace TanksGame.Visual
         private Transform contenedorCampamentos;
         private Transform contenedorTerreno;
         private Transform contenedorAvion;
+        private Transform contenedorClima; // nieve cayendo, ver ConstruirNieveCayendo()
         private Coroutine rutinaAvion;
         private float _alturaMontanaAprox = 3f;
 
@@ -211,6 +212,16 @@ namespace TanksGame.Visual
 
         private AudioSource audioSourceEfectos;
 
+        // Aplica, apenas se crea el componente, el volumen de efectos que el
+        // jugador haya guardado desde el panel de pausa (GameplayUI) en una
+        // partida anterior. Sin esto, el slider "Volumen efectos" del panel
+        // de pausa arrancaba siempre mostrando el valor de fábrica del
+        // Inspector en vez del último que el jugador eligió.
+        private void Awake()
+        {
+            volumenEfectos = PlayerPrefs.GetFloat("VolumenEfectos", volumenEfectos);
+        }
+
         private void ReproducirEfecto(AudioClip clip)
         {
             if (clip == null) return;
@@ -244,11 +255,13 @@ namespace TanksGame.Visual
             {
                 ConstruirMontanas(paleta.roca, paleta.cumbre);
                 ConstruirDecorado(paleta.roca);
+                if (biomaActual == Bioma.Selvatico) ConstruirVegetacionMontanas();
             }
 
             ConstruirCeldas(ancho, alto, paleta.celda);
             ConstruirCampamentos();
             AplicarAmbienteBioma(paleta.niebla);
+            if (biomaActual == Bioma.Nieve) ConstruirNieveCayendo(ancho, alto);
             AjustarPosicionSegunTamano(ancho, alto);
             AjustarCamaraAlTablero(ancho, alto);
             ConfigurarLimitesCamaraLibre();
@@ -558,10 +571,12 @@ namespace TanksGame.Visual
                 float scroll = mouse.scroll.ReadValue().y;
                 if (Mathf.Abs(scroll) > 0.001f)
                 {
-                    // Subido de 0.045 a 0.07: el zoom seguía sintiéndose lento
-                    // porque, además, dependía de Time.deltaTime (ver abajo).
+                    // Subido de 0.045 a 0.07 y luego a 0.14: seguía sintiéndose
+                    // lento. Además del multiplicador del scroll, se bajó el
+                    // smoothTime del SmoothDamp de abajo para que la cámara
+                    // llegue al zoom objetivo más rápido.
                     float objetivoZoom = Mathf.Clamp(
-                        camara.orthographicSize - scroll * camara.orthographicSize * 0.07f,
+                        camara.orthographicSize - scroll * camara.orthographicSize * 0.14f,
                         _zoomOrthoMinLimite, _zoomOrthoMaxLimite);
                     _zoomObjetivoActual = objetivoZoom;
                 }
@@ -577,7 +592,7 @@ namespace TanksGame.Visual
                 // todo. Con el tiempo NO escalado, la cámara sigue
                 // respondiendo esté pausado el juego o no.
                 camara.orthographicSize = Mathf.SmoothDamp(
-                    camara.orthographicSize, _zoomObjetivoActual, ref _zoomVelocidadActual, 0.08f,
+                    camara.orthographicSize, _zoomObjetivoActual, ref _zoomVelocidadActual, 0.035f,
                     Mathf.Infinity, Time.unscaledDeltaTime);
             }
 
@@ -796,7 +811,7 @@ namespace TanksGame.Visual
             var haciaCamara = DireccionHaciaCamara();
             var rng = new System.Random(12345);
 
-            var texturaMontana = GenerarTexturaMontana(colorRoca, colorCumbre);
+            var texturaMontana = GenerarTexturaMontana(colorRoca, colorCumbre, biomaActual == Bioma.Selvatico);
             var normalMontana = GenerarNormalMontana();
             var materialMontana = new Material(ObtenerShaderEstandar()) { mainTexture = texturaMontana };
             AsignarNormal(materialMontana, normalMontana, 1.1f);
@@ -846,8 +861,16 @@ namespace TanksGame.Visual
                     float z = _centroTablero.z + direccion.z * distancia;
 
                     float tinte = 0.88f + (float)rng.NextDouble() * 0.22f;
+                    // En el bioma Selvático la neblina de lejanía se tiñe de verde en
+                    // vez del gris azulado por defecto: si no, aunque la textura de la
+                    // montaña ya sea verde, este tinte de lejanía la desaturaba hacia
+                    // un gris frío y la sierra terminaba viéndose gris igual que en
+                    // cualquier otro bioma.
+                    Color colorLejania = biomaActual == Bioma.Selvatico
+                        ? new Color(0.55f, 0.68f, 0.5f)
+                        : new Color(0.8f, 0.85f, 0.95f);
                     var color = Color.Lerp(new Color(tinte, tinte, tinte),
-                        new Color(0.8f, 0.85f, 0.95f), progreso * 0.4f);
+                        colorLejania, progreso * 0.4f);
 
                     var posicion = new Vector3(x, AlturaSueloMundo(x, z) - 0.3f * _escalaObjetos, z);
                     CrearFormacionMontanosa(posicion, radioBase, altura, materialMontana, color,
@@ -900,7 +923,18 @@ namespace TanksGame.Visual
             // El rango se calcula con la altura máxima posible de la sierra para
             // que las bandas de la textura (pasto / pedrera / roca / nieve) caigan
             // siempre a la misma cota real: solo los picos altos salen nevados.
-            float rangoMaximo = _u * 2.5f * alturaSierra * 1.76f * 1.3f;
+            //
+            // En el bioma Nieve esto se reemplaza por un rango relativo a la
+            // altura DE ESTE pico (altura * 1.35, en vez de la cota global de
+            // toda la sierra): así la banda de nieve de la textura (que arranca
+            // en t=0.62) siempre cae dentro del ~40% superior de CADA montaña,
+            // sea alta o baja, en vez de solo aparecer en los picos más altos de
+            // toda la sierra. Es lo que hace que el paisaje nevado realmente se
+            // vea nevado (todas las cumbres blancas) en vez de igual que
+            // cualquier otro bioma con uno o dos picos ocasionalmente blancos.
+            float rangoMaximo = biomaActual == Bioma.Nieve
+                ? altura * 1.35f
+                : _u * 2.5f * alturaSierra * 1.76f * 1.3f;
             var montana = CrearMontanaIrregular(radio, altura, semilla, rangoMaximo, 28);
             montana.transform.SetParent(padre, false);
             montana.transform.localPosition = offsetLocal;
@@ -916,9 +950,52 @@ namespace TanksGame.Visual
             if (collider != null) Destroy(collider);
         }
 
-        // ---------------------------------------------------------------------
-        // SUELO
-        // ---------------------------------------------------------------------
+        // Solo bioma Selvatico: rodea la base de cada formación montañosa con
+        // un anillo denso de árboles de jungla, pegados a su huella real
+        // (huellasMontanas, ya calculada por ConstruirMontanas). Vista desde
+        // la cámara isométrica casi cenital del juego, esto hace que la
+        // sierra se lea como montañas cubiertas de selva en vez de roca
+        // pelada con un bosque aparte más adelante -- que es la queja
+        // original ("las montañas deben estar tupidas de árboles").
+        private void ConstruirVegetacionMontanas()
+        {
+            var contenedor = new GameObject("VegetacionMontanas").transform;
+            contenedor.SetParent(contenedorTerreno, false);
+
+            var rng = new System.Random(2024);
+            Color tronco = new Color(0.32f, 0.22f, 0.12f);
+            Color follajeOscuro = new Color(0.14f, 0.34f, 0.12f);
+            Color follajeClaro = new Color(0.28f, 0.5f, 0.16f);
+
+            int indice = 0;
+            foreach (var huella in huellasMontanas)
+            {
+                float radioFormacion = huella.y;
+                // Dos anillos concéntricos (uno pegado a la base, otro un
+                // poco más afuera) para que se vea un manchón grueso de selva
+                // trepando la falda, no una sola fila prolija de árboles.
+                for (int anillo = 0; anillo < 2; anillo++)
+                {
+                    float radioAnillo = radioFormacion * (0.78f + anillo * 0.18f);
+                    int cantidad = Mathf.Max(6, Mathf.RoundToInt(radioAnillo * 2.4f));
+
+                    for (int i = 0; i < cantidad; i++)
+                    {
+                        float angulo = ((float)i / cantidad + (float)rng.NextDouble() * 0.06f) * Mathf.PI * 2f;
+                        float radioPunto = radioAnillo * (0.94f + (float)rng.NextDouble() * 0.14f);
+                        float px = huella.x + Mathf.Cos(angulo) * radioPunto;
+                        float pz = huella.z + Mathf.Sin(angulo) * radioPunto;
+
+                        if (EstaCercaDeCampamento(px, pz, 1.2f * _escalaObjetos)) continue;
+
+                        var follaje = Color.Lerp(follajeOscuro, follajeClaro, (float)rng.NextDouble());
+                        CrearArbolJungla(contenedor, px, pz, indice++, tronco, follaje, rng);
+                    }
+                }
+            }
+        }
+
+
         private void ConstruirSuelo(int ancho, int alto, Color colorSuelo)
         {
             contenedorTerreno = new GameObject("TerrenoExterior").transform;
@@ -1090,7 +1167,10 @@ namespace TanksGame.Visual
                     var follaje = Color.Lerp(follajeOscuro, follajeClaro, (float)rng.NextDouble());
                     if (tonoManchon > 0.8f) follaje = Color.Lerp(follaje, follajeOtono, 0.5f);
 
-                    CrearArbol(contenedor, px, pz, indice++, tronco, follaje, rng);
+                    if (biomaActual == Bioma.Selvatico)
+                        CrearArbolJungla(contenedor, px, pz, indice++, tronco, follaje, rng);
+                    else
+                        CrearArbol(contenedor, px, pz, indice++, tronco, follaje, rng);
                 }
             }
         }
@@ -1118,9 +1198,68 @@ namespace TanksGame.Visual
                     indice * 11 + 1000 + capa, alturaCapa, 8, false);
                 copa.transform.SetParent(arbol, false);
                 copa.transform.localPosition = new Vector3(0f, alturaTronco * 0.6f + alturaCapa * 0.42f * capa, 0f);
-                PintarYLimpiar(copa, follaje * (1f - capa * 0.07f));
+
+                // Bioma Nieve: cada capa de follaje se aclara hacia blanco a
+                // medida que sube (capa 2 = la punta del árbol), simulando la
+                // nieve acumulada sobre las ramas. Sin esto los árboles se
+                // veían exactamente igual en cualquier bioma.
+                var colorCapa = follaje * (1f - capa * 0.07f);
+                if (biomaActual == Bioma.Nieve)
+                    colorCapa = Color.Lerp(colorCapa, new Color(0.95f, 0.96f, 0.98f), 0.3f + capa * 0.22f);
+                PintarYLimpiar(copa, colorCapa);
+            }
+
+            // Gorro de nieve extra en la punta, solo en el bioma Nieve: un
+            // pequeño cono blanco pegado justo en la cima del árbol para que se
+            // lea claramente "nevado" incluso a la distancia de cámara normal.
+            if (biomaActual == Bioma.Nieve)
+            {
+                var gorro = CrearMontanaIrregular(radioCopa * 0.42f, alturaCapa * 0.4f,
+                    indice * 11 + 1500, alturaCapa * 0.4f, 8, false);
+                gorro.transform.SetParent(arbol, false);
+                gorro.transform.localPosition = new Vector3(0f, alturaTronco * 0.6f + alturaCapa * 0.42f * 2.35f, 0f);
+                PintarYLimpiar(gorro, new Color(0.97f, 0.98f, 1f));
             }
         }
+
+        // Árbol de jungla (bioma Selvatico): tronco más alto y delgado que el
+        // pino de siempre, y copa ANCHA y redondeada armada con varias esferas
+        // achatadas superpuestas en vez de los tres conos que se afinan en
+        // punta del pino -- así se lee como follaje frondoso de árbol
+        // tropical en vez de una conífera nevada/de pradera.
+        private void CrearArbolJungla(Transform contenedor, float px, float pz, int indice,
+            Color tronco, Color follaje, System.Random rng)
+        {
+            var arbol = new GameObject("ArbolJungla").transform;
+            arbol.SetParent(contenedor, false);
+            arbol.localPosition = new Vector3(px, AlturaSueloMundo(px, pz), pz);
+            arbol.localScale = Vector3.one * Mathf.Lerp(1.0f, 2.0f, (float)rng.NextDouble()) * _escalaObjetos;
+            arbol.localRotation = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+
+            float alturaTronco = Mathf.Lerp(0.55f, 0.95f, (float)rng.NextDouble());
+            CrearPieza(arbol, PrimitiveType.Cylinder, new Vector3(0f, alturaTronco * 0.5f, 0f),
+                new Vector3(0.04f, alturaTronco * 0.5f, 0.04f), tronco);
+
+            // Copa: 3 a 5 esferas achatadas, desplazadas y de tamaño variable,
+            // superpuestas alrededor del eje del tronco -- un "manchón" ancho
+            // en vez de un cono puntiagudo.
+            int blobs = 3 + rng.Next(3);
+            float radioCopaBase = Mathf.Lerp(0.5f, 0.75f, (float)rng.NextDouble());
+            float centroCopaY = alturaTronco + radioCopaBase * 0.5f;
+
+            for (int b = 0; b < blobs; b++)
+            {
+                float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
+                float dist = radioCopaBase * 0.4f * (float)rng.NextDouble();
+                float radioBlob = radioCopaBase * Mathf.Lerp(0.55f, 0.9f, (float)rng.NextDouble());
+                var offset = new Vector3(Mathf.Cos(ang) * dist, (float)(rng.NextDouble() - 0.5) * radioCopaBase * 0.3f, Mathf.Sin(ang) * dist);
+                var colorBlob = Color.Lerp(follaje, new Color(0.15f, 0.35f, 0.1f), (float)rng.NextDouble() * 0.4f);
+
+                CrearPieza(arbol, PrimitiveType.Sphere, new Vector3(0f, centroCopaY, 0f) + offset,
+                    new Vector3(radioBlob, radioBlob * 0.72f, radioBlob), colorBlob);
+            }
+        }
+
 
         private void ConstruirPasto(Vector3 haciaCamara, System.Random rng)
         {
@@ -1538,13 +1677,15 @@ namespace TanksGame.Visual
 
         private static Texture2D _texturaMontanaCache;
         private static Color _texturaMontanaRoca, _texturaMontanaCumbre;
+        private static bool _texturaMontanaSelvatico;
 
         // Bandas por cota real (UV.v = altura mundial normalizada): pasto al pie,
         // pedrera, pared de roca cálida, roca gris y cumbre clara, con estrías
         // verticales encima. Solo los picos altos llegan a la banda clara.
-        private static Texture2D GenerarTexturaMontana(Color colorRoca, Color colorCumbre)
+        private static Texture2D GenerarTexturaMontana(Color colorRoca, Color colorCumbre, bool selvatico = false)
         {
-            if (_texturaMontanaCache != null && _texturaMontanaRoca == colorRoca && _texturaMontanaCumbre == colorCumbre)
+            if (_texturaMontanaCache != null && _texturaMontanaRoca == colorRoca && _texturaMontanaCumbre == colorCumbre
+                && _texturaMontanaSelvatico == selvatico)
                 return _texturaMontanaCache;
 
             const int ancho = 256;
@@ -1558,8 +1699,17 @@ namespace TanksGame.Visual
 
             Color pradera = Color.Lerp(colorRoca, new Color(0.26f, 0.34f, 0.16f), 0.65f);
             Color pedrera = Color.Lerp(colorRoca, new Color(0.76f, 0.72f, 0.63f), 0.6f);
-            Color rocaCalida = Color.Lerp(colorRoca, new Color(0.64f, 0.52f, 0.36f), 0.5f);
-            Color rocaClara = Color.Lerp(colorRoca, new Color(0.8f, 0.78f, 0.74f), 0.6f);
+            // En el bioma Selvático las franjas intermedias (que antes eran las más
+            // grandes de la textura, "roca cálida"/"roca clara" beige y gris claro)
+            // pasan a un verde musgo/roca cubierta de vegetación, para que la sierra
+            // se lea como una montaña de jungla y no como una montaña de piedra pelada
+            // con árboles alrededor.
+            Color rocaCalida = selvatico
+                ? Color.Lerp(colorRoca, new Color(0.3f, 0.4f, 0.18f), 0.5f)
+                : Color.Lerp(colorRoca, new Color(0.64f, 0.52f, 0.36f), 0.5f);
+            Color rocaClara = selvatico
+                ? Color.Lerp(colorRoca, new Color(0.42f, 0.52f, 0.3f), 0.55f)
+                : Color.Lerp(colorRoca, new Color(0.8f, 0.78f, 0.74f), 0.6f);
 
             for (int y = 0; y < alto; y++)
             {
@@ -1594,6 +1744,7 @@ namespace TanksGame.Visual
             _texturaMontanaCache = textura;
             _texturaMontanaRoca = colorRoca;
             _texturaMontanaCumbre = colorCumbre;
+            _texturaMontanaSelvatico = selvatico;
             return textura;
         }
 
@@ -1718,6 +1869,26 @@ namespace TanksGame.Visual
                 ?? Shader.Find("Standard")
                 ?? Shader.Find("Diffuse");
             return _shaderEstandarCache;
+        }
+
+        // Shader SIN iluminación (Unlit), reservado para la bandera. Con el
+        // shader Lit normal, la bandera recibe la luz direccional de la
+        // escena igual que cualquier otra superficie: según el ángulo con el
+        // que le pegue esa luz (que cambia con la órbita de la cámara/el
+        // ángulo del sol) se ve unas veces bien iluminada y otras veces
+        // oscura o lavada -- de ahí la queja de que "a veces se ve muy clara,
+        // a veces muy tenue". Unlit ignora las luces de la escena por
+        // completo y pinta siempre la textura con su color/brillo real, así
+        // que la bandera se ve consistente sin importar el ángulo.
+        private static Shader _shaderBanderaCache;
+        private static Shader ObtenerShaderBandera()
+        {
+            if (_shaderBanderaCache != null) return _shaderBanderaCache;
+
+            _shaderBanderaCache = Shader.Find("Universal Render Pipeline/Unlit")
+                ?? Shader.Find("Unlit/Texture")
+                ?? ObtenerShaderEstandar();
+            return _shaderBanderaCache;
         }
 
         // Asigna una textura al slot "base" correcto según el shader real que
@@ -1975,6 +2146,80 @@ namespace TanksGame.Visual
 
             var camara = Camera.main;
             if (camara != null) camara.backgroundColor = colorNiebla;
+        }
+
+        // Nevada continua sobre todo el tablero (y un margen alrededor), solo
+        // para el bioma Nieve. Sin esto, la única señal de que el bioma es
+        // "de nieve" eran los colores del terreno/montañas -- con copos
+        // cayendo todo el tiempo se lee de inmediato como una tormenta de
+        // nieve real, no solo una paleta de colores fríos.
+        private void ConstruirNieveCayendo(int ancho, int alto)
+        {
+            contenedorClima = new GameObject("NieveCayendo").transform;
+            contenedorClima.SetParent(transform, false);
+
+            float mitadAnchoConMargen = _mitadAncho + 14f * _escalaObjetos;
+            float mitadAltoConMargen = _mitadAlto + 14f * _escalaObjetos;
+            float alturaSpawn = _alturaMontanaAprox * 1.1f + 4f * _escalaObjetos;
+
+            var climaGo = new GameObject("Copos");
+            climaGo.transform.SetParent(contenedorClima, false);
+            climaGo.transform.localPosition = new Vector3(_centroTablero.x, alturaSpawn, _centroTablero.z);
+            // Rota el emisor para que su eje "adelante" (con el que las
+            // partículas de una forma Box salen por defecto) apunte hacia
+            // abajo (-Y del mundo) en vez de hacia +Z: así los copos caen
+            // derecho hacia el tablero sin tener que tocar gravityModifier.
+            climaGo.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+
+            var sistema = climaGo.AddComponent<ParticleSystem>();
+            var principal = sistema.main;
+            principal.startColor = new Color(1f, 1f, 1f, 0.9f);
+            principal.startSize = new ParticleSystem.MinMaxCurve(0.035f * _escalaObjetos, 0.09f * _escalaObjetos);
+            principal.startSpeed = 1.1f * _escalaObjetos;
+            principal.startLifetime = (alturaSpawn / Mathf.Max(0.5f, 1.1f * _escalaObjetos)) * 1.05f;
+            principal.maxParticles = 2000;
+            principal.simulationSpace = ParticleSystemSimulationSpace.World;
+            principal.gravityModifier = 0f; // la caída ya la da startSpeed + shape hacia abajo
+
+            var emision = sistema.emission;
+            emision.rateOverTime = Mathf.Clamp((ancho + alto) * 3f, 40f, 260f);
+
+            var forma = sistema.shape;
+            forma.shapeType = ParticleSystemShapeType.Box;
+            // OJO con los ejes: climaGo está rotado 90° en X (ver arriba), así
+            // que el eje LOCAL Y de esta caja termina siendo el eje Z del
+            // mundo (profundidad del tablero) y el eje LOCAL Z termina siendo
+            // el eje -Y del mundo (la altura, donde va el espesor fino del
+            // que nacen los copos). Iba con Y/Z al revés en la primera
+            // versión y los copos salían concentrados en una franja angosta
+            // en vez de cubrir todo el tablero.
+            forma.scale = new Vector3(mitadAnchoConMargen * 2f, mitadAltoConMargen * 2f, 0.1f);
+
+            // Un leve vaivén horizontal (viento) para que no caiga en línea
+            // perfectamente recta, que se ve artificial. En espacio MUNDO a
+            // propósito: el emisor está rotado 90° en X (ver arriba) para que
+            // la forma Box dispare hacia abajo, así que sus ejes locales X/Z
+            // ya no coinciden con el mundo -- en espacio local el viento
+            // terminaría empujando parte del movimiento en Y sin querer.
+            var velocidadPorVida = sistema.velocityOverLifetime;
+            velocidadPorVida.enabled = true;
+            velocidadPorVida.space = ParticleSystemSimulationSpace.World;
+            velocidadPorVida.x = new ParticleSystem.MinMaxCurve(-0.15f * _escalaObjetos, 0.15f * _escalaObjetos);
+            velocidadPorVida.z = new ParticleSystem.MinMaxCurve(-0.15f * _escalaObjetos, 0.15f * _escalaObjetos);
+            // Unity exige que las curvas de X/Y/Z de este módulo usen el mismo modo.
+            // X y Z quedan en modo "entre dos constantes" por el constructor de arriba
+            // (dos floats); si Y se deja sin asignar, se queda en modo "constante" y la
+            // mezcla de modos dispara "Particle Velocity curves must all be in the same
+            // mode" en cada frame. Se fija Y en 0 con el mismo modo (dos constantes
+            // iguales) para que no le agregue vaivén vertical pero sí calce el modo.
+            velocidadPorVida.y = new ParticleSystem.MinMaxCurve(0f, 0f);
+
+            var renderer = climaGo.GetComponent<ParticleSystemRenderer>();
+            if (renderer != null)
+            {
+                renderer.material = new Material(ObtenerShaderEstandar());
+                renderer.renderMode = ParticleSystemRenderMode.Billboard;
+            }
         }
 
         // ---------------------------------------------------------------------
@@ -2321,7 +2566,7 @@ namespace TanksGame.Visual
             var filtro = banderaGo.AddComponent<MeshFilter>();
             filtro.mesh = malla;
             var banderaRenderer = banderaGo.AddComponent<MeshRenderer>();
-            var materialBandera = new Material(ObtenerShaderEstandar());
+            var materialBandera = new Material(ObtenerShaderBandera());
             AplicarTexturaPrincipal(materialBandera, PaletaSkins.GenerarTexturaBandera(indiceBandera));
             // Cull Off (doble cara): por defecto el shader Lit descarta la
             // cara trasera (Cull Back). La bandera es una sola lámina de
@@ -3189,6 +3434,7 @@ namespace TanksGame.Visual
             if (contenedorCampamentos != null) Destroy(contenedorCampamentos.gameObject);
             if (contenedorTerreno != null) Destroy(contenedorTerreno.gameObject);
             if (contenedorAvion != null) Destroy(contenedorAvion.gameObject);
+            if (contenedorClima != null) Destroy(contenedorClima.gameObject);
         }
 
         // ---------------------------------------------------------------------

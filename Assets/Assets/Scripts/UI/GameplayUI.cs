@@ -152,6 +152,11 @@ namespace TanksGame.UI
             audioSourceMusica = gameObject.AddComponent<AudioSource>();
             audioSourceMusica.playOnAwake = false;
             audioSourceMusica.loop = true;
+            // Si el jugador ya había ajustado el volumen de música/efectos en
+            // una partida anterior (guardado en PlayerPrefs desde el panel de
+            // pausa), se respeta ese valor en vez de siempre volver al de
+            // fábrica del Inspector.
+            volumenMusica = PlayerPrefs.GetFloat("VolumenMusica", volumenMusica);
             audioSourceMusica.volume = volumenMusica;
             if (musicaFondo != null)
             {
@@ -242,7 +247,17 @@ namespace TanksGame.UI
             var canvas = canvasGo.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1600, 900);
+            var canvasScaler = canvasGo.GetComponent<CanvasScaler>();
+            canvasScaler.referenceResolution = new Vector2(1600, 900);
+            // Con matchWidthOrHeight en 0 (por defecto) el canvas solo respeta el
+            // ANCHO de referencia: si la ventana/pantalla tiene una relación de
+            // aspecto más ancha que 16:9 (por ejemplo el Game view del editor
+            // redimensionado), el alto disponible en unidades de canvas se achica
+            // por debajo de 900 y cualquier elemento pegado al borde superior (como
+            // el título "PAUSA" del panel de pausa) queda recortado fuera de
+            // pantalla. 0.5 (balanceado entre ancho y alto) evita ese recorte en
+            // cualquier relación de aspecto, igual que ya usa PantallaProgramacionTanques.
+            canvasScaler.matchWidthOrHeight = 0.5f;
             canvasGo.AddComponent<GraphicRaycaster>();
             canvasGo.transform.SetParent(transform, false);
 
@@ -406,6 +421,12 @@ namespace TanksGame.UI
             Time.timeScale = 0f;
             panelPausa.SetActive(true);
             if (sonidoPausa != null) audioSource.PlayOneShot(sonidoPausa);
+            // La música de fondo es un AudioSource independiente de
+            // Time.timeScale (los AudioSource siguen sonando aunque el juego
+            // esté en pausa lógica), así que hay que pausarla a mano. Antes
+            // solo se congelaba la simulación (tanques/turnos) pero la
+            // música seguía de fondo sin parar.
+            if (audioSourceMusica != null && audioSourceMusica.isPlaying) audioSourceMusica.Pause();
         }
 
         private void OnContinuar()
@@ -413,6 +434,7 @@ namespace TanksGame.UI
             panelPausa.SetActive(false);
             Time.timeScale = 1f;
             juegoPausado = false;
+            if (audioSourceMusica != null) audioSourceMusica.UnPause();
         }
 
         // ------------------------------------------------------------------
@@ -452,16 +474,31 @@ namespace TanksGame.UI
             contenedorRect.anchorMin = new Vector2(0.5f, 0.5f);
             contenedorRect.anchorMax = new Vector2(0.5f, 0.5f);
             contenedorRect.pivot = new Vector2(0.5f, 0.5f);
-            contenedorRect.sizeDelta = new Vector2(700, 700);
-            contenedorRect.anchoredPosition = new Vector2(0, 40);
+            contenedorRect.sizeDelta = new Vector2(700, 820);
+            contenedorRect.anchoredPosition = new Vector2(0, 0);
 
-            CrearTituloDePanel(contenedorRect, "PAUSA", new Vector2(0, -40));
+            CrearTituloDePanel(contenedorRect, "PAUSA", new Vector2(0, -55));
 
             CrearEtiquetaSeccion(contenedorRect, "AUDIO", new Vector2(0, -110));
             CrearSlider(contenedorRect, "Volumen general", new Vector2(0, -170),
                 AudioListener.volume, valor => AudioListener.volume = valor);
+            CrearSlider(contenedorRect, "Volumen música", new Vector2(0, -230),
+                volumenMusica, valor =>
+                {
+                    volumenMusica = valor;
+                    if (audioSourceMusica != null) audioSourceMusica.volume = valor;
+                    PlayerPrefs.SetFloat("VolumenMusica", valor);
+                });
+            CrearSlider(contenedorRect, "Volumen efectos", new Vector2(0, -290),
+                gameManager != null && gameManager.vistaTablero != null ? gameManager.vistaTablero.volumenEfectos : 0.7f,
+                valor =>
+                {
+                    if (gameManager != null && gameManager.vistaTablero != null)
+                        gameManager.vistaTablero.volumenEfectos = valor;
+                    PlayerPrefs.SetFloat("VolumenEfectos", valor);
+                });
 
-            CrearEtiquetaSeccion(contenedorRect, "VIDEO", new Vector2(0, -240));
+            CrearEtiquetaSeccion(contenedorRect, "VIDEO", new Vector2(0, -360));
 
             resolucionesDisponibles = Screen.resolutions
                 .Select(r => new Resolution { width = r.width, height = r.height })
@@ -473,11 +510,11 @@ namespace TanksGame.UI
             indiceResolucion = Mathf.Max(0, resolucionesDisponibles.FindIndex(
                 r => r.width == Screen.width && r.height == Screen.height));
 
-            textoResolucion = CrearSelectorCiclo(contenedorRect, "Resolución", new Vector2(0, -300),
+            textoResolucion = CrearSelectorCiclo(contenedorRect, "Resolución", new Vector2(0, -420),
                 TextoResolucionActual(), CambiarResolucion);
 
             estadoPantallaCompleta = Screen.fullScreen;
-            textoPantallaCompleta = CrearSelectorCiclo(contenedorRect, "Pantalla completa", new Vector2(0, -360),
+            textoPantallaCompleta = CrearSelectorCiclo(contenedorRect, "Pantalla completa", new Vector2(0, -480),
                 estadoPantallaCompleta ? "SÍ" : "NO", _ => CambiarPantallaCompleta());
 
             int totalNivelesReales = Mathf.Max(1, QualitySettings.names.Length);
@@ -486,12 +523,12 @@ namespace TanksGame.UI
                 ? 1
                 : Mathf.Clamp(Mathf.RoundToInt(nivelRealActual * 2f / (totalNivelesReales - 1)), 0, 2);
 
-            textoCalidad = CrearSelectorCiclo(contenedorRect, "Calidad gráfica", new Vector2(0, -420),
+            textoCalidad = CrearSelectorCiclo(contenedorRect, "Calidad gráfica", new Vector2(0, -540),
                 NombresCalidad[indiceCalidad], CambiarCalidad);
 
-            CrearEtiquetaSeccion(contenedorRect, "PARTIDA", new Vector2(0, -490));
-            CrearBotonTextoSimple(contenedorRect, "REGRESAR AL MENÚ", new Vector2(0, -550), OnAbrirConfirmarSalir);
-            CrearBotonTextoSimple(contenedorRect, "CONTINUAR", new Vector2(0, -610), OnContinuar);
+            CrearEtiquetaSeccion(contenedorRect, "PARTIDA", new Vector2(0, -610));
+            CrearBotonTextoSimple(contenedorRect, "REGRESAR AL MENÚ", new Vector2(0, -670), OnAbrirConfirmarSalir);
+            CrearBotonTextoSimple(contenedorRect, "CONTINUAR", new Vector2(0, -730), OnContinuar);
 
             panelPausa.SetActive(false);
         }
@@ -1154,9 +1191,10 @@ namespace TanksGame.UI
             hud.segmentosVida = CrearBarraVidaSegmentada(contenido, 50f, SEGMENTOS_BARRA_VIDA);
             hud.textoPorcentajeVida = CrearTextoValorHud(contenido, 36f);
 
-            // Fila BOMBAS: etiqueta + pips cuadrados + número.
-            CrearEtiquetaFilaHud(contenido, "BOMBAS", 74f, color);
-            hud.pipsBomba = CrearPipsHud(contenido, 88f, Mathf.Min(hud.capacidadBombas, 8), new Color(1f, 0.72f, 0.18f));
+            // Fila MISILES: etiqueta + pips cuadrados + número.
+            CrearEtiquetaFilaHud(contenido, "MISILES", 74f, color);
+            hud.pipsBomba = CrearPipsHud(contenido, 88f, hud.capacidadBombas, new Color(1f, 0.72f, 0.18f),
+                tamanoPanelTanque.x - 40f);
             hud.textoBombas = CrearTextoValorHud(contenido, 74f);
 
             // Fila ESCUDO: etiqueta + ícono que se enciende + estado.
@@ -1293,9 +1331,21 @@ namespace TanksGame.UI
 
         // Fila de "pips" cuadrados (para bombas y para el escudo): cada uno
         // prende o se apaga según corresponda, look de vidas/ítems de arcade.
-        private Image[] CrearPipsHud(Transform padre, float yDesdeArriba, int cantidad, Color colorEncendido)
+        // "cantidad" ya NO se recorta a 8: antes limitaba los pips de misiles a
+        // como mucho 8 (Mathf.Min(hud.capacidadBombas, 8) en el llamador), así
+        // que un tanque con más de 8 misiles mostraba pips de menos sin avisar
+        // -- el número de al lado sí era correcto, pero los cuadraditos no
+        // representaban todos. Ahora se crean todos los pips que hagan falta y,
+        // si no entran con el espaciado normal (14px), se van achicando pip y
+        // espaciado para que el total siga entrando en "anchoDisponible".
+        private Image[] CrearPipsHud(Transform padre, float yDesdeArriba, int cantidad, Color colorEncendido,
+            float anchoDisponible = 260f)
         {
-            var pips = new Image[Mathf.Max(1, cantidad)];
+            int total = Mathf.Max(1, cantidad);
+            float espaciado = total > 1 ? Mathf.Min(14f, anchoDisponible / total) : 14f;
+            float tamanoPip = Mathf.Clamp(espaciado - 3f, 3f, 10f);
+
+            var pips = new Image[total];
             for (int i = 0; i < pips.Length; i++)
             {
                 var go = new GameObject($"Pip_{i}");
@@ -1306,8 +1356,8 @@ namespace TanksGame.UI
                 rect.anchorMin = new Vector2(0, 1);
                 rect.anchorMax = new Vector2(0, 1);
                 rect.pivot = new Vector2(0, 1);
-                rect.sizeDelta = new Vector2(10, 10);
-                rect.anchoredPosition = new Vector2(9 + i * 14f, -yDesdeArriba);
+                rect.sizeDelta = new Vector2(tamanoPip, tamanoPip);
+                rect.anchoredPosition = new Vector2(9 + i * espaciado, -yDesdeArriba);
                 pips[i] = img;
             }
 

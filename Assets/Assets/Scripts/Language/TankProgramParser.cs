@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using TanksGame.Core;
 
@@ -17,6 +18,13 @@ namespace TanksGame.Language
     //   IF RADAR(N) > 0
     //   MISIL(N)
     //
+    // La condición de un IF (en cualquiera de los dos formatos) puede
+    // encadenar varias condiciones simples con "Y" o "AND" (todas deben
+    // cumplirse), por ejemplo:
+    //   IF (RADAR(N) < 0 Y RADAR(O) < 0) {
+    //       MOV(S)
+    //   }
+    //
     // LIMITACIÓN ACTUAL: cada bloque IF (de cualquiera de los dos formatos) admite
     // EXACTAMENTE una instrucción — el motor de turnos (TurnManager/ProgramStep) fue
     // diseñado así desde el principio. "BUCLE" / "FIN" / "INICIO" / "INICIO:" se
@@ -31,8 +39,14 @@ namespace TanksGame.Language
             new Regex(@"^IF\s+(.+)$", RegexOptions.IgnoreCase);
 
         private static readonly Regex ConditionRegex =
-            new Regex(@"^(VIDA|MISILES|RADAR\(([NSEO])\))\s*(>=|<=|==|>|<)\s*(-?\d+(\.\d+)?)$",
+            new Regex(@"^(VIDA|MISILES|RADAR\(([NSEO])\))\s*(>=|<=|==|=|>|<)\s*(-?\d+(\.\d+)?)$",
                 RegexOptions.IgnoreCase);
+
+        // Separa condiciones simples unidas con "Y" o "AND" (con espacios
+        // alrededor), por ejemplo "RADAR(N)<0 Y RADAR(O)<0". Como el grupo es
+        // no-capturante, Split() no incluye el separador en el resultado.
+        private static readonly Regex AndSplitRegex =
+            new Regex(@"\s+(?:Y|AND)\s+", RegexOptions.IgnoreCase);
 
         public static List<ProgramStep> Parse(string script)
         {
@@ -143,7 +157,26 @@ namespace TanksGame.Language
             return true;
         }
 
+        // Punto de entrada: si el texto trae una o más "Y"/"AND", arma una
+        // condición compuesta (todas deben cumplirse); si no, es una condición
+        // simple de toda la vida.
         private static Condition ParseCondition(string text)
+        {
+            var partes = AndSplitRegex.Split(text.Trim())
+                .Select(p => p.Trim())
+                .Where(p => p.Length > 0)
+                .ToList();
+
+            if (partes.Count == 0)
+                throw new FormatException($"Condición inválida: '{text}'");
+
+            if (partes.Count == 1)
+                return ParseCondicionSimple(partes[0]);
+
+            return new Condition { Sub = partes.Select(ParseCondicionSimple).ToList() };
+        }
+
+        private static Condition ParseCondicionSimple(string text)
         {
             var compact = text.Replace(" ", "");
             var match = ConditionRegex.Match(compact);
@@ -170,6 +203,7 @@ namespace TanksGame.Language
                 case ">=": condition.Op = ComparisonOp.GreaterOrEqual; break;
                 case "<=": condition.Op = ComparisonOp.LessOrEqual; break;
                 case "==": condition.Op = ComparisonOp.Equal; break;
+                case "=": condition.Op = ComparisonOp.Equal; break;
                 default: throw new FormatException($"Operador desconocido en: '{text}'");
             }
 

@@ -572,6 +572,11 @@ MonoBehaviour:
   prefabAvion: {fileID: 919132149155446097, guid: 91fc0800d3cd5224a95d99198519c310, type: 3}
   escalaPrefabAvion: 0.3
   rotacionExtraAvion: {x: 0, y: 0, z: 0}
+  ajustarPosicionTableroSegunTamano: 1
+  ladoReferenciaChico: 3
+  posicionParaLadoChico: {x: -0.25, y: -0.1, z: 1}
+  ladoReferenciaGrande: 20
+  posicionParaLadoGrande: {x: -0.94, y: 0, z: 4.25}
   ajustarCamaraAutomaticamente: 1
   tableroReferenciaCamara: {x: 10, y: 10}
   margenExtraCamara: 1
@@ -644,7 +649,7 @@ MonoBehaviour:
   sonidoCambio: {fileID: 8300000, guid: 1d4ec4ebc029f914a8864e139064c950, type: 3}
   sonidoPausa: {fileID: 8300000, guid: b73de41b5397990449b7aed7bd29957b, type: 3}
   fondoPausa: {fileID: 21300000, guid: 42b5e3cbe7906d44e9f0e258a7e3c6b0, type: 3}
-  musicaFondo: {fileID: 0}
+  musicaFondo: {fileID: 8300000, guid: d78f6530c9047774594441b2bb9dd64a, type: 3}
   volumenMusica: 0.5
 --- !u!4 &2012781288
 Transform:

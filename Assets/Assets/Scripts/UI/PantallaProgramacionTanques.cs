@@ -12,6 +12,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using TanksGame.Core;
 using TanksGame.Language;
+using TanksGame.Visual;
 
 namespace TanksGame.UI
 {
@@ -132,6 +133,37 @@ namespace TanksGame.UI
         private Text tituloOverlayNombre;
         private string nombreArchivoActual = "";
 
+        // Overlay "Configurar partida": se abre al tocar INICIAR PARTIDA (antes de
+        // cargar la escena de juego) para elegir bioma/paisaje y la cantidad de
+        // misiles con la que arranca cada tanque.
+        [Header("Capturas reales de cada bioma (Configurar Partida)")]
+        [Tooltip("Foto/captura del bioma Pradera para la tarjeta de selección de bioma. Si no se asigna, se usa una miniatura generada por código.")]
+        public Sprite previewBiomaPradera;
+        [Tooltip("Foto/captura del bioma Nieve para la tarjeta de selección de bioma. Si no se asigna, se usa una miniatura generada por código.")]
+        public Sprite previewBiomaNieve;
+        [Tooltip("Foto/captura del bioma Jungla para la tarjeta de selección de bioma. Si no se asigna, se usa una miniatura generada por código.")]
+        public Sprite previewBiomaJungla;
+
+        private GameObject overlayConfigurarPartida;
+        private BoardView.Bioma biomaElegido = BoardView.Bioma.Pradera;
+        private int misilesPorTanqueElegido = 5;
+        private const int MISILES_MINIMO = 1;
+        private const int MISILES_MAXIMO = 20;
+        private Text textoMisilesPorTanque;
+        // Un botón por bioma (Pradera/Nieve/Selvático) para poder resaltar cuál
+        // está elegido en cada momento (ver ActualizarBotonesBioma).
+        private readonly Dictionary<BoardView.Bioma, Image> fondosBotonBioma = new Dictionary<BoardView.Bioma, Image>();
+
+        // Fundido de entrada/salida del overlay "Configurar partida": un CanvasGroup
+        // cuyo alfa se anima de 0 a 1 (y viceversa), a la vez que la caja crece de
+        // escala 0 a 1 (efecto "pop"), en vez de simplemente activar o desactivar
+        // el GameObject de golpe.
+        private CanvasGroup fundidoConfigurarPartida;
+        private CanvasGroup fundidoCajaConfigurarPartida;
+        private RectTransform cajaConfigurarPartida;
+        private Coroutine corrutinaFundidoConfigurarPartida;
+        private const float DURACION_FUNDIDO_CONFIGURAR_PARTIDA = 0.22f;
+
         // Si no es null, significa que el contenido del editor vino de tocar un
         // tanque en el Historial (ver OnSeleccionarHistorial): la próxima vez que
         // se toque GUARDAR, se ACTUALIZA ese tanque en vez de crear uno nuevo (ver
@@ -195,7 +227,6 @@ namespace TanksGame.UI
         private int caretAnteriorEditor;
         private int anclaAnteriorEditor;
         private int focoAnteriorEditor;
-        private bool procesandoCambioBackspace;
 
         private static readonly string[] PalabrasClave =
         {
@@ -454,6 +485,7 @@ namespace TanksGame.UI
             ConstruirPanelPersonalizarSkin(canvasGo.transform);
             ConstruirOverlayConfirmarBorrado(canvasGo.transform);
             ConstruirOverlayNombreArchivo(canvasGo.transform);
+            ConstruirOverlayConfigurarPartida(canvasGo.transform);
 
             ReconstruirListaHistorial();
             ActualizarBotonEliminarScript();
@@ -906,7 +938,20 @@ private void AsegurarCursorVisible()
                 new Vector2(15, 85), new Vector2(15, 65),
                 colorFondoPantalla, null);
 
-            areaCodigo.AddComponent<RectMask2D>();
+            // Se usa Mask (recorte por stencil de GPU) en vez de RectMask2D a
+            // propósito: RectMask2D solo recorta gráficos que implementan
+            // IClippable, y el InputField dibuja su cursor y el resaltado de
+            // selección con una malla propia que NO implementa esa interfaz
+            // (limitación conocida de Unity). Con RectMask2D, esa malla no se
+            // recortaba y, al seleccionar varias líneas (o con Ctrl+A), la
+            // franja azul de selección se dibujaba sin límites, tapando la
+            // columna de números de línea e incluso la barra de botones de
+            // arriba. Mask sí recorta esa malla porque actúa a nivel de GPU
+            // sobre todo lo que se dibuja debajo, sin importar si el
+            // componente es "clip-aware" o no. areaCodigo ya tiene el Image
+            // de fondo (colorFondoPantalla) que Mask necesita como máscara.
+            var mascaraCodigo = areaCodigo.AddComponent<Mask>();
+            mascaraCodigo.showMaskGraphic = true;
             scrollTerminal = areaCodigo.AddComponent<ScrollRect>();
             scrollTerminal.horizontal = false;
             scrollTerminal.vertical = true;
@@ -977,75 +1022,41 @@ private void AsegurarCursorVisible()
             ActualizarEditorTrasCambio();
         }
 
-        private void AlCambiarTextoEditor(string nuevoTexto)
+        // Sincroniza números de línea, resaltado de sintaxis, altura del
+        // contenido y scroll después de que EditorInputField.KeyPressed()
+        // modifica el texto directamente (Backspace inteligente). No se
+        // depende de que asignar InputField.text dispare onValueChanged por su
+        // cuenta -- se llama explícitamente para que el resultado sea siempre
+        // el mismo, sin importar esa particularidad interna de Unity.
+        private void SincronizarTrasEdicionManualDelEditor()
         {
-            // InputField ya procesó el Backspace. Solo después de ese procesamiento
-            // reemplazamos el borrado de UN carácter por el borrado de la instrucción
-            // completa. No tocamos OnUpdateSelected(), que es quien mantiene la
-            // navegación vertical/horizontal del InputField.
-            bool backspacePresionado = Keyboard.current != null &&
-                                       Keyboard.current.backspaceKey.isPressed;
-
-            bool debeBorrarInstruccion = !procesandoCambioBackspace &&
-                                         backspacePresionado &&
-                                         campoEditor != null &&
-                                         campoEditor.isFocused &&
-                                         anclaAnteriorEditor == focoAnteriorEditor &&
-                                         !string.IsNullOrEmpty(textoAnteriorEditor) &&
-                                         nuevoTexto.Length == textoAnteriorEditor.Length - 1;
-
-            if (debeBorrarInstruccion)
-            {
-                int caret = Mathf.Clamp(caretAnteriorEditor, 0, textoAnteriorEditor.Length);
-
-                if (caret > 0)
-                {
-                    int inicioLinea = textoAnteriorEditor.LastIndexOf('\n', Mathf.Max(0, caret - 1)) + 1;
-                    int inicioABorrar;
-
-                    if (caret == inicioLinea)
-                    {
-                        inicioABorrar = inicioLinea - 1;
-                    }
-                    else
-                    {
-                        string antesEnLinea = textoAnteriorEditor.Substring(inicioLinea, caret - inicioLinea);
-                        inicioABorrar = inicioLinea + EncontrarInicioTokenABorrar(antesEnLinea);
-                    }
-
-                    inicioABorrar = Mathf.Clamp(inicioABorrar, 0, caret);
-                    string textoPersonalizado = textoAnteriorEditor.Remove(
-                        inicioABorrar, caret - inicioABorrar);
-
-                    procesandoCambioBackspace = true;
-                    try
-                    {
-                        campoEditor.text = textoPersonalizado;
-                    }
-                    finally
-                    {
-                        procesandoCambioBackspace = false;
-                    }
-
-                    nuevoTexto = textoPersonalizado;
-                    FijarCursorEnEditor(inicioABorrar);
-                }
-            }
-
             textoAnteriorEditor = campoEditor.text;
             caretAnteriorEditor = campoEditor.caretPosition;
             anclaAnteriorEditor = campoEditor.selectionAnchorPosition;
             focoAnteriorEditor = campoEditor.selectionFocusPosition;
             ultimaPosicionCursorConocida = caretAnteriorEditor;
 
-            // Cada cambio de texto debe recalcular también la altura del contenido.
-            // Este era el punto que hacía que, después de ~11 líneas, Enter siguiera
-            // agregando texto pero el ScrollRect no tuviera contenido adicional al
-            // cual desplazarse.
             ActualizarEditorSinMoverCursor();
 
             if (campoEditor.isFocused && !sincronizandoCursorProgramaticamente)
                 AsegurarCursorVisible();
+        }
+
+        private void AlCambiarTextoEditor(string nuevoTexto)
+        {
+            // El borrado de la instrucción/línea vacía/símbolo completo bajo el
+            // cursor con Backspace ya NO se maneja acá. Este método corría DESPUÉS
+            // de que InputField ya había borrado un carácter, así que solo podía
+            // reconstruir el borrado comparando el texto de antes y de después --
+            // un parche reactivo, un paso por detrás de lo que Unity ya hizo, y
+            // por eso era frágil (a veces hacía falta un segundo Backspace para
+            // que recién ahí surtiera efecto). Ahora se intercepta el Backspace
+            // ANTES de que Unity lo procese, sobrescribiendo KeyPressed() en
+            // EditorInputField (ver esa clase, más abajo), que es el punto de
+            // extensión pensado por Unity para esto. Acá solo queda sincronizar
+            // el resto del editor después de CUALQUIER cambio de texto (tipeo
+            // normal, pegado, flechas, Backspace ya aplicado, etc.).
+            SincronizarTrasEdicionManualDelEditor();
         }
 
         private void ActualizarEditorTrasCambio()
@@ -1795,6 +1806,355 @@ private void AsegurarCursorVisible()
             overlayNombreArchivo.SetActive(false);
         }
 
+        // ------------------------------------------------------------------
+        // OVERLAY "CONFIGURAR PARTIDA" (bioma + misiles) — se abre al tocar
+        // INICIAR PARTIDA, después de validar que haya suficientes tanques
+        // programados, y antes de cargar la escena de juego.
+        // ------------------------------------------------------------------
+        private void ConstruirOverlayConfigurarPartida(Transform padre)
+        {
+            overlayConfigurarPartida = CrearRectElastico(padre, "OverlayConfigurarPartida",
+                Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero,
+                Color.white, null);
+
+            // Fondo "cristal esmerilado": una imagen clara y borrosa (manchas suaves
+            // en los tonos de cada bioma, como si se viera el mapa de fondo fuera de
+            // foco) en vez del velo negro sólido de antes, que tapaba la pantalla por
+            // completo.
+            var fondoOverlay = overlayConfigurarPartida.GetComponent<Image>();
+            fondoOverlay.sprite = ObtenerSpriteFondoBorroso();
+            fondoOverlay.type = Image.Type.Simple;
+            fondoOverlay.color = new Color(1f, 1f, 1f, 0.94f);
+
+            // CanvasGroup para el fundido de entrada/salida (alfa 0 -> 1).
+            fundidoConfigurarPartida = overlayConfigurarPartida.AddComponent<CanvasGroup>();
+            fundidoConfigurarPartida.alpha = 0f;
+            var caja = CrearRect(overlayConfigurarPartida.transform, "Caja", Vector2.zero, new Vector2(620, 470), colorPanel);
+            var cajaRect = caja.GetComponent<RectTransform>();
+            cajaRect.anchorMin = new Vector2(0.5f, 0.5f);
+            cajaRect.anchorMax = new Vector2(0.5f, 0.5f);
+            cajaRect.pivot = new Vector2(0.5f, 0.5f);
+            cajaRect.anchoredPosition = Vector2.zero;
+            cajaConfigurarPartida = cajaRect;
+            cajaConfigurarPartida.localScale = Vector3.zero;
+            // CanvasGroup propio de la caja (independiente del fondo borroso): al
+            // confirmar "INICIAR PARTIDA" solo se desvanece la caja y el fondo claro
+            // borroso se queda de pie tapando la pantalla de Programación de Tanques
+            // hasta que la partida termina de cargar (ver ConfirmarIniciarPartidaCorrutina).
+            fundidoCajaConfigurarPartida = caja.AddComponent<CanvasGroup>();
+            fundidoCajaConfigurarPartida.alpha = 0f;
+
+            CrearTexto(caja.transform, "Titulo", "CONFIGURAR PARTIDA", new Vector2(0, 20), new Vector2(620, 30),
+                18, FontStyle.Bold, TextAnchor.MiddleCenter, colorBotonAccentoRojo);
+
+            // --- Bioma / paisaje: tres tarjetas con miniatura + nombre ---
+            CrearTexto(caja.transform, "EtiquetaBioma", "BIOMA", new Vector2(0, 60), new Vector2(620, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+
+            fondosBotonBioma.Clear();
+            CrearBotonBioma(caja.transform, BoardView.Bioma.Pradera, "PRADERA", new Vector2(20, 94));
+            CrearBotonBioma(caja.transform, BoardView.Bioma.Nieve, "NIEVE", new Vector2(220, 94));
+            CrearBotonBioma(caja.transform, BoardView.Bioma.Selvatico, "JUNGLA", new Vector2(420, 94));
+
+            // --- Cantidad de misiles por tanque (centrado, igual que el título/BIOMA) ---
+            CrearTexto(caja.transform, "EtiquetaMisiles", "MISILES POR TANQUE", new Vector2(0, 275), new Vector2(620, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+
+            CrearFlecha(caja.transform, "BotonMenosMisiles", "-", new Vector2(200, 305),
+                () => CambiarMisilesPorTanque(-1));
+            textoMisilesPorTanque = CrearTexto(caja.transform, "TextoMisiles", "5", new Vector2(260, 305), new Vector2(100, 50),
+                22, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            CrearFlecha(caja.transform, "BotonMasMisiles", "+", new Vector2(370, 305),
+                () => CambiarMisilesPorTanque(1));
+
+            // --- Confirmar / cancelar ---
+            var botonConfirmar = CrearRect(caja.transform, "BotonConfirmar", new Vector2(20, 390), new Vector2(280, 50), colorBotonAccentoVerde);
+            var confirmarBtn = botonConfirmar.AddComponent<Button>();
+            confirmarBtn.targetGraphic = botonConfirmar.GetComponent<Image>();
+            confirmarBtn.onClick.AddListener(ConfirmarIniciarPartida);
+            CrearTexto(botonConfirmar.transform, "Texto", "INICIAR PARTIDA", Vector2.zero, new Vector2(280, 50),
+                16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+
+            var botonCancelar = CrearRect(caja.transform, "BotonCancelar", new Vector2(320, 390), new Vector2(280, 50), colorBoton);
+            var cancelarBtn = botonCancelar.AddComponent<Button>();
+            cancelarBtn.targetGraphic = botonCancelar.GetComponent<Image>();
+            cancelarBtn.onClick.AddListener(CerrarOverlayConfigurarPartida);
+            CrearTexto(botonCancelar.transform, "Texto", "CANCELAR", Vector2.zero, new Vector2(280, 50),
+                16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+
+            overlayConfigurarPartida.SetActive(false);
+        }
+
+        // Tarjeta de bioma: 180x160, con una miniatura (cielo/suelo generados según
+        // el bioma) arriba y el nombre del bioma debajo, en vez del botón de texto
+        // plano que había antes.
+        private void CrearBotonBioma(Transform padre, BoardView.Bioma bioma, string etiqueta, Vector2 posicion)
+        {
+            var go = CrearRect(padre, $"Bioma_{bioma}", posicion, new Vector2(180, 160), colorBoton);
+            var boton = go.AddComponent<Button>();
+            var imagen = go.GetComponent<Image>();
+            boton.targetGraphic = imagen;
+            boton.onClick.AddListener(() =>
+            {
+                biomaElegido = bioma;
+                ActualizarBotonesBioma();
+            });
+
+            var miniatura = CrearRect(go.transform, "Miniatura", new Vector2(10, 10), new Vector2(160, 110), Color.white);
+            var imagenMiniatura = miniatura.GetComponent<Image>();
+            imagenMiniatura.sprite = ObtenerSpriteReferenciaBioma(bioma) ?? ObtenerSpritePreviewBioma(bioma);
+            imagenMiniatura.type = Image.Type.Simple;
+            imagenMiniatura.preserveAspect = false;
+            imagenMiniatura.color = Color.white;
+
+            CrearTexto(go.transform, "Texto", etiqueta, new Vector2(0, 124), new Vector2(180, 30),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            fondosBotonBioma[bioma] = imagen;
+        }
+
+        // Devuelve la captura real asignada en el Inspector para ese bioma (campos
+        // previewBiomaPradera/Nieve/Jungla), o null si todavía no se asignó ninguna
+        // (en ese caso CrearBotonBioma cae de vuelta a la miniatura generada por
+        // código, ObtenerSpritePreviewBioma).
+        private Sprite ObtenerSpriteReferenciaBioma(BoardView.Bioma bioma)
+        {
+            switch (bioma)
+            {
+                case BoardView.Bioma.Nieve: return previewBiomaNieve;
+                case BoardView.Bioma.Selvatico: return previewBiomaJungla;
+                default: return previewBiomaPradera;
+            }
+        }
+
+        private static readonly Dictionary<BoardView.Bioma, Sprite> _spritesPreviewBioma = new Dictionary<BoardView.Bioma, Sprite>();
+
+        // Miniatura procedural (cielo arriba / suelo abajo) para cada bioma, así la
+        // tarjeta comunica de un vistazo el aspecto del paisaje sin depender de un
+        // asset de captura de pantalla.
+        private static Sprite ObtenerSpritePreviewBioma(BoardView.Bioma bioma)
+        {
+            if (_spritesPreviewBioma.TryGetValue(bioma, out var existente)) return existente;
+
+            Color cielo, suelo, horizonte;
+            switch (bioma)
+            {
+                case BoardView.Bioma.Nieve:
+                    cielo = new Color(0.75f, 0.82f, 0.92f);
+                    suelo = new Color(0.88f, 0.9f, 0.94f);
+                    horizonte = new Color(0.82f, 0.86f, 0.93f);
+                    break;
+                case BoardView.Bioma.Selvatico:
+                    cielo = new Color(0.55f, 0.68f, 0.6f);
+                    suelo = new Color(0.22f, 0.4f, 0.18f);
+                    horizonte = new Color(0.32f, 0.48f, 0.28f);
+                    break;
+                default: // Pradera
+                    cielo = new Color(0.5f, 0.68f, 0.88f);
+                    suelo = new Color(0.36f, 0.47f, 0.26f);
+                    horizonte = new Color(0.55f, 0.62f, 0.5f);
+                    break;
+            }
+
+            const int ancho = 64;
+            const int alto = 44;
+            var textura = new Texture2D(ancho, alto, TextureFormat.RGB24, false) { filterMode = FilterMode.Bilinear };
+            int lineaHorizonte = (int)(alto * 0.55f);
+            for (int y = 0; y < alto; y++)
+            {
+                for (int x = 0; x < ancho; x++)
+                {
+                    Color color;
+                    if (y > lineaHorizonte) color = suelo;
+                    else if (y > lineaHorizonte - 3) color = horizonte;
+                    else color = Color.Lerp(cielo, horizonte, 1f - (float)y / lineaHorizonte);
+                    textura.SetPixel(x, y, color);
+                }
+            }
+            textura.Apply();
+
+            var sprite = Sprite.Create(textura, new Rect(0, 0, ancho, alto), new Vector2(0.5f, 0.5f));
+            _spritesPreviewBioma[bioma] = sprite;
+            return sprite;
+        }
+
+        private static Sprite _spriteFondoBorrosoCache;
+
+        // Fondo del overlay "Configurar partida": manchas suaves y claras en tonos
+        // de pasto/nieve/cielo, muy desenfocadas (radios grandes y bordes con
+        // degradado), para dar la sensación de un mapa fuera de foco detrás del
+        // panel, en vez del velo negro sólido de antes.
+        private static Sprite ObtenerSpriteFondoBorroso()
+        {
+            if (_spriteFondoBorrosoCache != null) return _spriteFondoBorrosoCache;
+
+            const int n = 128;
+            var textura = new Texture2D(n, n, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+            var rng = new System.Random(99);
+            Color baseClara = new Color(0.86f, 0.88f, 0.86f);
+            var manchas = new (float x, float y, float r, Color c)[]
+            {
+                (0.2f, 0.3f, 0.5f, new Color(0.55f, 0.72f, 0.5f)),
+                (0.75f, 0.2f, 0.45f, new Color(0.6f, 0.75f, 0.85f)),
+                (0.6f, 0.7f, 0.55f, new Color(0.7f, 0.78f, 0.65f)),
+                (0.15f, 0.75f, 0.4f, new Color(0.8f, 0.83f, 0.75f)),
+            };
+
+            for (int y = 0; y < n; y++)
+            {
+                float v = y / (float)(n - 1);
+                for (int x = 0; x < n; x++)
+                {
+                    float u = x / (float)(n - 1);
+                    Color acumulado = baseClara;
+                    foreach (var mancha in manchas)
+                    {
+                        float dist = Vector2.Distance(new Vector2(u, v), new Vector2(mancha.x, mancha.y));
+                        float peso = Mathf.Clamp01(1f - dist / mancha.r);
+                        peso = peso * peso; // borde bien suave, sin corte duro
+                        acumulado = Color.Lerp(acumulado, mancha.c, peso * 0.6f);
+                    }
+                    textura.SetPixel(x, y, new Color(acumulado.r, acumulado.g, acumulado.b, 1f));
+                }
+            }
+            textura.Apply();
+
+            _spriteFondoBorrosoCache = Sprite.Create(textura, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f));
+            return _spriteFondoBorrosoCache;
+        }
+
+        // Resalta con el acento rojo el botón del bioma elegido y deja los otros
+        // dos con el color de botón normal, para que quede claro cuál está
+        // seleccionado.
+        private void ActualizarBotonesBioma()
+        {
+            foreach (var par in fondosBotonBioma)
+                par.Value.color = par.Key == biomaElegido ? colorBotonAccentoRojo : colorBoton;
+        }
+
+        private void CambiarMisilesPorTanque(int delta)
+        {
+            misilesPorTanqueElegido = Mathf.Clamp(misilesPorTanqueElegido + delta, MISILES_MINIMO, MISILES_MAXIMO);
+            if (textoMisilesPorTanque != null) textoMisilesPorTanque.text = misilesPorTanqueElegido.ToString();
+        }
+
+        // Abre el overlay de configuración de partida con los valores por defecto
+        // (o los últimos elegidos, si el jugador ya lo había abierto antes en esta
+        // misma sesión de la pantalla de programación).
+        private void AbrirOverlayConfigurarPartida()
+        {
+            ActualizarBotonesBioma();
+            if (textoMisilesPorTanque != null) textoMisilesPorTanque.text = misilesPorTanqueElegido.ToString();
+            if (fundidoConfigurarPartida != null) { fundidoConfigurarPartida.interactable = true; fundidoConfigurarPartida.alpha = 0f; }
+            overlayConfigurarPartida.SetActive(true);
+            IniciarFundidoConfigurarPartida(0f, 1f, true);
+        }
+
+        // Cierra el overlay con el mismo fundido de salida (en vez de apagarlo de
+        // golpe con SetActive), y recién al terminar lo desactiva.
+        // Cierra el overlay entero (fondo borroso + caja) con el mismo fundido de
+        // salida que el de apertura, al revés. Se usa para "CANCELAR": ahí sí
+        // queremos que desaparezca todo y vuelva a verse la pantalla de Programación
+        // de Tanques de una.
+        private void CerrarOverlayConfigurarPartida()
+        {
+            IniciarFundidoConfigurarPartida(fundidoCajaConfigurarPartida != null ? fundidoCajaConfigurarPartida.alpha : 1f, 0f,
+                true, () => overlayConfigurarPartida.SetActive(false));
+        }
+
+        private void IniciarFundidoConfigurarPartida(float desde, float hasta, bool animarFondo = true, System.Action alTerminar = null)
+        {
+            if (fundidoCajaConfigurarPartida == null) return;
+            if (corrutinaFundidoConfigurarPartida != null) StopCoroutine(corrutinaFundidoConfigurarPartida);
+            corrutinaFundidoConfigurarPartida = StartCoroutine(FundidoConfigurarPartida(desde, hasta, animarFondo, alTerminar));
+        }
+
+        // animarFondo=true (apertura/cancelación): el fondo borroso y la caja se
+        // funden juntos.
+        // animarFondo=false (al confirmar "INICIAR PARTIDA"): SOLO se funde/encoge
+        // la caja; el fondo claro borroso se queda de pie a alfa completo, tapando
+        // la pantalla de Programación de Tanques mientras la partida termina de
+        // cargar (ver ConfirmarIniciarPartidaCorrutina) — antes, apenas terminaba
+        // esta animación, se alcanzaba a ver esa pantalla de fondo un instante.
+        private IEnumerator FundidoConfigurarPartida(float desde, float hasta, bool animarFondo, System.Action alTerminar)
+        {
+            if (animarFondo && fundidoConfigurarPartida != null) fundidoConfigurarPartida.alpha = desde;
+            fundidoCajaConfigurarPartida.alpha = desde;
+            if (cajaConfigurarPartida != null) cajaConfigurarPartida.localScale = Vector3.one * desde;
+            float t = 0f;
+            while (t < DURACION_FUNDIDO_CONFIGURAR_PARTIDA)
+            {
+                t += Time.unscaledDeltaTime;
+                float progreso = Mathf.Clamp01(t / DURACION_FUNDIDO_CONFIGURAR_PARTIDA);
+                float alfa = Mathf.Lerp(desde, hasta, progreso);
+                if (animarFondo && fundidoConfigurarPartida != null) fundidoConfigurarPartida.alpha = alfa;
+                fundidoCajaConfigurarPartida.alpha = alfa;
+                if (cajaConfigurarPartida != null)
+                {
+                    // "SmoothStep" (suavizado en ambos extremos) para que el crecimiento
+                    // de tamaño 0 a 100% se sienta natural en vez de lineal.
+                    float progresoEscala = Mathf.SmoothStep(0f, 1f, progreso);
+                    cajaConfigurarPartida.localScale = Vector3.one * Mathf.Lerp(desde, hasta, progresoEscala);
+                }
+                yield return null;
+            }
+            if (animarFondo && fundidoConfigurarPartida != null) fundidoConfigurarPartida.alpha = hasta;
+            fundidoCajaConfigurarPartida.alpha = hasta;
+            if (cajaConfigurarPartida != null) cajaConfigurarPartida.localScale = Vector3.one * hasta;
+            corrutinaFundidoConfigurarPartida = null;
+            alTerminar?.Invoke();
+        }
+
+        // Confirma la configuración elegida en el overlay (bioma + misiles): arma la
+        // partida de verdad, arranca la carga de la escena de juego EN PARALELO con
+        // el fundido de salida del overlay (alfa y escala 1 -> 0, igual que el de
+        // entrada pero al revés) y recién activa la escena cuando ambas cosas
+        // terminaron. Antes el overlay se desactivaba de golpe (SetActive(false)),
+        // así que durante el instante en que Unity tardaba en cargar la escena se
+        // veía de nuevo, sin transición, la pantalla de Programación de Tanques.
+        private Coroutine corrutinaConfirmarIniciarPartida;
+
+        private void ConfirmarIniciarPartida()
+        {
+            if (corrutinaConfirmarIniciarPartida != null) return;
+            corrutinaConfirmarIniciarPartida = StartCoroutine(ConfirmarIniciarPartidaCorrutina());
+        }
+
+        private IEnumerator ConfirmarIniciarPartidaCorrutina()
+        {
+            // Bloquea toda la caja (bioma, misiles, confirmar, cancelar) mientras se
+            // cierra el overlay y carga la partida, para que no se pueda volver a
+            // tocar nada de por medio.
+            if (fundidoConfigurarPartida != null) fundidoConfigurarPartida.interactable = false;
+            if (corrutinaFundidoConfigurarPartida != null) StopCoroutine(corrutinaFundidoConfigurarPartida);
+
+            ConfiguracionPartidaPendiente.Establecer(new List<string>(scriptsPorTanque), new List<TanqueSkinDatos>(skinsPorTanque),
+                tamanoTablero, biomaElegido, misilesPorTanqueElegido);
+
+            var carga = SceneManager.LoadSceneAsync(nombreEscenaJuego);
+            carga.allowSceneActivation = false;
+
+            // Fundido de salida en paralelo a la carga: SOLO se funde/encoge la caja
+            // (animarFondo=false) — el fondo claro borroso se queda de pie tapando la
+            // pantalla de Programación de Tanques hasta que la escena esté lista.
+            yield return FundidoConfigurarPartida(
+                fundidoCajaConfigurarPartida != null ? fundidoCajaConfigurarPartida.alpha : 1f, 0f, false, null);
+
+            // LoadSceneAsync deja el progreso tope en 0.9 mientras allowSceneActivation
+            // sea false; en cuanto llega ahí, la carga de verdad ya terminó y solo
+            // falta activar la escena.
+            while (carga.progress < 0.9f) yield return null;
+
+            // OJO: acá NO se desactiva el overlay a mano (SetActive(false)) antes de
+            // activar la escena. Si se hacía, el fondo borroso desaparecía de
+            // inmediato dejando ver la pantalla de Programación de Tanques durante
+            // el/los frames que Unity tarda en terminar de activar la escena nueva
+            // (instanciar el tablero, construir el terreno, etc. — de ahí el hueco
+            // que se veía). Al cargar una escena nueva Unity destruye solo la escena
+            // actual, así que el fondo borroso se queda tapando todo hasta el
+            // instante exacto en que la escena del juego reemplaza a esta.
+            carga.allowSceneActivation = true;
+        }
+
         // Reconstruye la lista de scripts del Historial dentro del overlay, uno por
         // fila; tocar una fila dispara el diálogo nativo "Guardar como" con ese
         // contenido y ese nombre sugerido.
@@ -2250,7 +2610,8 @@ private void AsegurarCursorVisible()
             // eventos. Esto es importante para ↑/↓ porque mantiene internamente
             // m_CaretPosition y m_CaretSelectPosition sin que nuestro código los
             // desincronice. El Backspace especial se reconstruye en AlCambiarTextoEditor().
-            var campo = go.AddComponent<InputField>();
+            var campo = go.AddComponent<EditorInputField>();
+            campo.Duenio = this;
             campo.textComponent = texto;
             campo.lineType = InputField.LineType.MultiLineNewline;
             campo.text = textoInicial;
@@ -2292,6 +2653,67 @@ private void AsegurarCursorVisible()
             campo.caretWidth = 2;
 
             return campo;
+        }
+
+        // InputField personalizado para el editor de scripts: sobrescribe
+        // KeyPressed() para interceptar el Backspace ANTES de que Unity lo
+        // procese, en vez de intentar reconstruirlo DESPUÉS comparando texto
+        // antes/después en onValueChanged (lo que se hacía antes, y era frágil:
+        // a veces hacía falta un segundo Backspace para que surtiera efecto).
+        // KeyPressed() es el punto de extensión que UnityEngine.UI.InputField
+        // expone justamente para esto. Con un Backspace simple (sin selección,
+        // sin Ctrl/Cmd) se borra la instrucción, línea vacía o símbolo completo
+        // bajo el cursor; para cualquier otra tecla (flechas, Enter, Ctrl+Backspace,
+        // con selección activa, etc.) se deja el comportamiento normal de Unity.
+        private class EditorInputField : InputField
+        {
+            public PantallaProgramacionTanques Duenio;
+
+            protected override EditState KeyPressed(Event evt)
+            {
+                bool conModificador = (evt.modifiers & (EventModifiers.Control | EventModifiers.Command)) != 0;
+                bool sinSeleccion = caretPosition == selectionAnchorPosition;
+
+                if (evt.keyCode == KeyCode.Backspace && !conModificador && sinSeleccion && Duenio != null)
+                {
+                    BorrarInstruccionCompleta();
+                    return EditState.Continue;
+                }
+
+                return base.KeyPressed(evt);
+            }
+
+            private void BorrarInstruccionCompleta()
+            {
+                string t = text;
+                int caret = caretPosition;
+                if (caret <= 0 || string.IsNullOrEmpty(t)) return;
+
+                int inicioLinea = t.LastIndexOf('\n', Mathf.Max(0, caret - 1)) + 1;
+                int inicioABorrar;
+
+                if (caret == inicioLinea)
+                {
+                    // El cursor está justo al principio de la línea: un Backspace
+                    // acá borra el salto de línea anterior y fusiona con la línea
+                    // de arriba (igual que en cualquier editor de texto normal).
+                    inicioABorrar = inicioLinea - 1;
+                }
+                else
+                {
+                    string antesEnLinea = t.Substring(inicioLinea, caret - inicioLinea);
+                    inicioABorrar = inicioLinea + Duenio.EncontrarInicioTokenABorrar(antesEnLinea);
+                }
+
+                inicioABorrar = Mathf.Clamp(inicioABorrar, 0, caret);
+
+                text = t.Remove(inicioABorrar, caret - inicioABorrar);
+                caretPosition = inicioABorrar;
+                selectionAnchorPosition = inicioABorrar;
+                selectionFocusPosition = inicioABorrar;
+
+                Duenio.SincronizarTrasEdicionManualDelEditor();
+            }
         }
 
         // Botón de acción "slot" de la barra superior: en vez de un ancho fijo en
@@ -2635,8 +3057,7 @@ private void AsegurarCursorVisible()
                 return;
             }
 
-            ConfiguracionPartidaPendiente.Establecer(new List<string>(scriptsPorTanque), new List<TanqueSkinDatos>(skinsPorTanque), tamanoTablero);
-            SceneManager.LoadScene(nombreEscenaJuego);
+            AbrirOverlayConfigurarPartida();
         }
 
         private void OnLimpiarHistorial()

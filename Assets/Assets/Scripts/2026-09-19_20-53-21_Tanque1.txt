@@ -1,0 +1,55 @@
+IF (RADAR(N)<0 y RADAR(O)<0) {
+    MINA
+}
+IF (RADAR(N)<0 y RADAR(O)<0) {
+    MOV(E)
+}
+
+ESCUDO
+IF ( RADAR(S)>0) {
+    MISIL(S)
+}
+AMT(E)
+AMT(S)
+
+IF (RADAR(S)<0 y RADAR(O)<0) {
+    MINA
+}
+IF (RADAR(S)<0 y RADAR(O)<0) {
+    MOV(N)
+}
+
+ESCUDO
+IF ( RADAR(N)>0) {
+    MISIL(N)
+}
+AMT(E)
+AMT(N)
+
+IF (RADAR(E)<0 y RADAR(N)<0) {
+    MINA
+}
+IF (RADAR(E)<0 y RADAR(N)<0) {
+    MOV(S)
+}
+
+ESCUDO
+IF ( RADAR(E)>0) {
+    MISIL(E)
+}
+AMT(O)
+AMT(S)
+
+IF (RADAR(S)<0 y RADAR(E)<0) {
+    MINA
+}
+IF (RADAR(S)<0 y RADAR(E)<0) {
+    MOV(O)
+}
+
+ESCUDO
+IF ( RADAR(O)>0) {
+    MISIL(O)
+}
+AMT(O)
+AMT(N)

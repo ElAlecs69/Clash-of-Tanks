@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using TanksGame.Visual;
 
 namespace TanksGame.Core
 {
@@ -22,6 +23,16 @@ namespace TanksGame.Core
         public static IReadOnlyList<TanqueSkinDatos> SkinsPorTanque { get; private set; }
         public static int TamanoTablero { get; private set; }
 
+        // Bioma elegido en la pantalla de "Configurar partida" (después de
+        // programar los tanques, antes de cargar la escena de juego) y
+        // cantidad de misiles con la que arranca cada tanque. Bioma.Pradera
+        // (valor 0 del enum) y 5 misiles son los mismos valores por defecto
+        // que ya se usaban antes de que existiera esta pantalla, así que una
+        // partida vieja (o la escena de juego abierta directo, sin pasar por
+        // acá) se sigue comportando igual.
+        public static BoardView.Bioma Bioma { get; private set; } = BoardView.Bioma.Pradera;
+        public static int MisilesPorTanque { get; private set; } = 5;
+
         // Copia de la última partida armada, para el botón "REPETIR" del final
         // de la partida (repetir la MISMA configuración sin volver a pasar por
         // la pantalla de programación). A diferencia de lo anterior, esto NO se
@@ -31,17 +42,24 @@ namespace TanksGame.Core
         public static IReadOnlyList<string> UltimaScriptsPorTanque { get; private set; }
         public static IReadOnlyList<TanqueSkinDatos> UltimaSkinsPorTanque { get; private set; }
         public static int UltimoTamanoTablero { get; private set; }
+        public static BoardView.Bioma UltimoBioma { get; private set; } = BoardView.Bioma.Pradera;
+        public static int UltimoMisilesPorTanque { get; private set; } = 5;
 
-        public static void Establecer(IReadOnlyList<string> scriptsPorTanque, IReadOnlyList<TanqueSkinDatos> skinsPorTanque, int tamanoTablero)
+        public static void Establecer(IReadOnlyList<string> scriptsPorTanque, IReadOnlyList<TanqueSkinDatos> skinsPorTanque,
+            int tamanoTablero, BoardView.Bioma bioma, int misilesPorTanque)
         {
             ScriptsPorTanque = scriptsPorTanque;
             SkinsPorTanque = skinsPorTanque;
             TamanoTablero = tamanoTablero;
+            Bioma = bioma;
+            MisilesPorTanque = misilesPorTanque;
             Hay = true;
 
             UltimaScriptsPorTanque = scriptsPorTanque;
             UltimaSkinsPorTanque = skinsPorTanque;
             UltimoTamanoTablero = tamanoTablero;
+            UltimoBioma = bioma;
+            UltimoMisilesPorTanque = misilesPorTanque;
             HayUltimaPartida = true;
         }
 
@@ -63,7 +81,7 @@ namespace TanksGame.Core
         public static bool PrepararRepeticion()
         {
             if (!HayUltimaPartida) return false;
-            Establecer(UltimaScriptsPorTanque, UltimaSkinsPorTanque, UltimoTamanoTablero);
+            Establecer(UltimaScriptsPorTanque, UltimaSkinsPorTanque, UltimoTamanoTablero, UltimoBioma, UltimoMisilesPorTanque);
             return true;
         }
     }
