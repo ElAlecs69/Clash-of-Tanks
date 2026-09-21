@@ -246,7 +246,7 @@ namespace TanksGame.Gameplay
             if (vistaTablero != null)
             {
                 vistaTablero.ActualizarTanques(datosVisuales, animarMovimiento: false);
-                vistaTablero.ActualizarMinas(board.MinePositions());
+                vistaTablero.AgregarMinas(board.MinePositions());
 
                 // Se copia cada disparo a un diccionario propio de esta
                 // llamada: turnManager.LastRoundShots es la MISMA lista que

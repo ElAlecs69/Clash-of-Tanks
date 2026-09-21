@@ -2766,14 +2766,24 @@ namespace TanksGame.Visual
         // (armada o recién colocada) y se quita solo cuando GridBoard ya no
         // la reporta (porque detonó o porque, en el futuro, se retire por
         // otro motivo).
+        //
+        // AgregarMinas() solo CREA marcadores nuevos -- nunca destruye uno
+        // existente. Antes esto lo hacía ActualizarMinas(), llamada justo
+        // después de resolver la ronda (GameManager.ExecuteRound), es decir
+        // ANTES de que se reprodujera la animación de movimiento/explosión;
+        // como la mina ya estaba lógicamente consumida en ese momento, su
+        // marcador desaparecía del tablero al instante, mientras el tanque
+        // recién estaba empezando a animarse hacia esa celda -- se veía
+        // desaparecer "cuando se mueve", no "cuando la pisa". Ahora la
+        // eliminación del marcador de una mina puntual la dispara
+        // QuitarMinaVisual(), llamada desde ReproducirEventoDeDano() en el
+        // instante exacto en que esa detonación se reproduce en pantalla.
         // ---------------------------------------------------------------------
         private readonly Dictionary<Vector2Int, GameObject> minasVisuales = new Dictionary<Vector2Int, GameObject>();
 
-        public void ActualizarMinas(IEnumerable<Vector2Int> celdasConMina)
+        public void AgregarMinas(IEnumerable<Vector2Int> celdasConMina)
         {
-            var vigentes = new HashSet<Vector2Int>(celdasConMina);
-
-            foreach (var celda in vigentes)
+            foreach (var celda in celdasConMina)
             {
                 if (minasVisuales.ContainsKey(celda)) continue;
 
@@ -2789,16 +2799,13 @@ namespace TanksGame.Visual
                 minasVisuales[celda] = raiz.gameObject;
                 StartCoroutine(ParpadeoMina(raiz));
             }
+        }
 
-            var aQuitar = new List<Vector2Int>();
-            foreach (var kv in minasVisuales)
-                if (!vigentes.Contains(kv.Key)) aQuitar.Add(kv.Key);
-
-            foreach (var celda in aQuitar)
-            {
-                if (minasVisuales[celda] != null) Destroy(minasVisuales[celda]);
-                minasVisuales.Remove(celda);
-            }
+        public void QuitarMinaVisual(Vector2Int celda)
+        {
+            if (!minasVisuales.TryGetValue(celda, out var go)) return;
+            if (go != null) Destroy(go);
+            minasVisuales.Remove(celda);
         }
 
         private System.Collections.IEnumerator ParpadeoMina(Transform raiz)
@@ -2869,6 +2876,14 @@ namespace TanksGame.Visual
         private bool _rondaEnAnimacion;
         public bool RondaEnAnimacion => _rondaEnAnimacion;
 
+        // Avisa (playerId, vidaPorcentajeNueva) en el instante EXACTO en que un
+        // tanque queda con su nueva vida en pantalla -- justo cuando explota el
+        // disparo, la mina, el choque o se sacude por desgaste -- para que la UI
+        // (GameplayUI) pueda bajar el recuadro de vida recién ahí, en vez de
+        // bajarlo de golpe apenas termina de calcularse la ronda, antes de que el
+        // misil/AMT siquiera salga del cañón.
+        public event System.Action<int, int> AlActualizarVidaDeTanque;
+
         public void ReproducirRondaSecuencial(List<PasoRonda> pasos, List<EventoDanoVisual> eventos = null)
         {
             StartCoroutine(ReproducirRondaSecuencialCoroutine(pasos, eventos));
@@ -2888,11 +2903,16 @@ namespace TanksGame.Visual
                     yield return MoverTanqueSuave(visual, destinoMundo);
                 }
 
-                if (paso.Disparo != null)
-                    yield return ReproducirUnDisparo(paso.Disparo);
-
+                // El RADAR se reproduce ANTES que el disparo: cronológicamente el
+                // escaneo ya pasó (si vino de la condición de un IF, se evaluó antes
+                // de decidir si disparar; si vino como instrucción suelta, el parser
+                // no admite dos instrucciones en el mismo paso), así que mostrarlo
+                // primero es lo que corresponde a lo que en verdad ocurrió.
                 if (paso.Radar != null)
                     yield return ReproducirRadar(paso.Radar);
+
+                if (paso.Disparo != null)
+                    yield return ReproducirUnDisparo(paso.Disparo);
             }
 
             if (eventos != null)
@@ -2924,6 +2944,7 @@ namespace TanksGame.Visual
             switch (evento.Tipo)
             {
                 case DamageEventType.Mina:
+                    QuitarMinaVisual(evento.Celda);
                     ReproducirEfecto(sonidoExplosionMina);
                     yield return Explosion(puntoMundo, 0.9f);
                     break;
@@ -2961,9 +2982,15 @@ namespace TanksGame.Visual
                 if (!tanquesVisuales.TryGetValue(id, out var visualObjetivo) || visualObjetivo == null) continue;
 
                 if (evento.DestruidosIds.Contains(id))
+                {
                     AplicarEstadoDeDano(visualObjetivo, 0); // queda la chatarra, no se oculta
+                    AlActualizarVidaDeTanque?.Invoke(id, 0);
+                }
                 else if (evento.VidaPorcentajeDespuesPorId.TryGetValue(id, out var vidaDespues))
+                {
                     AplicarEstadoDeDano(visualObjetivo, vidaDespues);
+                    AlActualizarVidaDeTanque?.Invoke(id, vidaDespues);
+                }
             }
         }
 
@@ -3044,10 +3071,9 @@ namespace TanksGame.Visual
             if (disparo.TargetId != -1 && tanquesVisuales.TryGetValue(disparo.TargetId, out var visualObjetivo)
                 && visualObjetivo != null)
             {
-                if (disparo.TargetDestruido)
-                    AplicarEstadoDeDano(visualObjetivo, 0); // queda la chatarra, no se oculta
-                else
-                    AplicarEstadoDeDano(visualObjetivo, disparo.TargetVidaPorcentajeDespues);
+                int vidaFinal = disparo.TargetDestruido ? 0 : disparo.TargetVidaPorcentajeDespues;
+                AplicarEstadoDeDano(visualObjetivo, vidaFinal); // queda la chatarra, no se oculta, si TargetDestruido
+                AlActualizarVidaDeTanque?.Invoke(disparo.TargetId, vidaFinal);
             }
         }
 

@@ -51,67 +51,92 @@ namespace TanksGame.Language
         public static List<ProgramStep> Parse(string script)
         {
             var steps = new List<ProgramStep>();
-            var lines = new List<string>();
 
-            foreach (var raw in script.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            // Guardamos, junto a cada línea ya "limpia" (sin comentario, sin espacios
+            // sobrantes), el número de línea ORIGINAL del editor. Antes se usaba
+            // directamente el índice dentro de esta lista ya filtrada (i + 1) como si
+            // fuera el número de línea real, pero como las líneas en blanco, los
+            // comentarios y las líneas que quedan vacías al sacarles el comentario se
+            // descartan de la lista, ese índice se iba corriendo apenas había alguna
+            // línea vacía o un comentario antes del error -- por eso el mensaje señalaba
+            // una línea distinta de la que realmente tenía el problema.
+            var lines = new List<(string Texto, int NumeroOriginal)>();
+
+            var lineasCrudas = script.Split('\n');
+            for (int n = 0; n < lineasCrudas.Length; n++)
             {
-                var sinComentario = QuitarComentario(raw);
+                var sinRetorno = lineasCrudas[n].TrimEnd('\r');
+                var sinComentario = QuitarComentario(sinRetorno);
                 var trimmed = sinComentario.Trim();
-                if (trimmed.Length > 0) lines.Add(trimmed);
+                if (trimmed.Length > 0) lines.Add((trimmed, n + 1));
             }
 
             for (int i = 0; i < lines.Count; i++)
             {
-                var line = lines[i];
+                var line = lines[i].Texto;
+                var numeroLinea = lines[i].NumeroOriginal;
 
-                // --- Formato nuevo: IF (condición) { ---
-                if (TryParseIfBlockHeader(line, out var condicionCruda))
+                try
                 {
-                    var condition = ParseCondition(condicionCruda);
+                    // --- Formato nuevo: IF (condición) { ---
+                    if (TryParseIfBlockHeader(line, out var condicionCruda))
+                    {
+                        var condition = ParseCondition(condicionCruda);
 
-                    int indiceInstruccion = i + 1;
-                    if (indiceInstruccion >= lines.Count)
-                        throw new FormatException($"El bloque IF de la línea {i + 1} no tiene ninguna instrucción antes de cerrar.");
+                        int indiceInstruccion = i + 1;
+                        if (indiceInstruccion >= lines.Count)
+                            throw new FormatException($"El bloque IF de la línea {numeroLinea} no tiene ninguna instrucción antes de cerrar.");
 
-                    var lineaInstruccion = lines[indiceInstruccion];
-                    if (lineaInstruccion == "}")
-                        throw new FormatException(
-                            $"El bloque IF de la línea {i + 1} está vacío: debe tener exactamente una instrucción entre las llaves.");
+                        var lineaInstruccion = lines[indiceInstruccion].Texto;
+                        if (lineaInstruccion == "}")
+                            throw new FormatException(
+                                $"El bloque IF de la línea {numeroLinea} está vacío: debe tener exactamente una instrucción entre las llaves.");
 
-                    var instruction = ParseInstruction(lineaInstruccion);
+                        var instruction = ParseInstruction(lineaInstruccion);
 
-                    int indiceCierre = indiceInstruccion + 1;
-                    if (indiceCierre >= lines.Count || lines[indiceCierre] != "}")
-                        throw new FormatException(
-                            $"El bloque IF de la línea {i + 1} debe cerrar con '}}' justo después de la instrucción " +
-                            "(por ahora solo se admite UNA instrucción por bloque IF).");
+                        int indiceCierre = indiceInstruccion + 1;
+                        if (indiceCierre >= lines.Count || lines[indiceCierre].Texto != "}")
+                            throw new FormatException(
+                                $"El bloque IF de la línea {numeroLinea} debe cerrar con '}}' justo después de la instrucción " +
+                                "(por ahora solo se admite UNA instrucción por bloque IF).");
 
-                    steps.Add(new ProgramStep { Condition = condition, Instruction = instruction });
-                    i = indiceCierre;
-                    continue;
+                        steps.Add(new ProgramStep { Condition = condition, Instruction = instruction });
+                        i = indiceCierre;
+                        continue;
+                    }
+
+                    // --- Formato viejo: IF <condición> seguida de la instrucción en la línea de abajo ---
+                    var ifViejoMatch = IfViejoRegex.Match(line);
+                    if (ifViejoMatch.Success)
+                    {
+                        var condition = ParseCondition(ifViejoMatch.Groups[1].Value.Trim());
+                        if (i + 1 >= lines.Count)
+                            throw new FormatException($"La línea {numeroLinea} (IF) no tiene una instrucción asociada debajo.");
+
+                        i++;
+                        var instruction = ParseInstruction(lines[i].Texto);
+                        steps.Add(new ProgramStep { Condition = condition, Instruction = instruction });
+                        continue;
+                    }
+
+                    // --- Marcadores sin efecto ---
+                    var lineUpper = line.ToUpperInvariant();
+                    if (lineUpper == "BUCLE" || lineUpper == "FIN" || lineUpper == "INICIO" || lineUpper == "INICIO:")
+                        continue;
+
+                    // --- Instrucción normal, sin condición ---
+                    steps.Add(new ProgramStep { Condition = null, Instruction = ParseInstruction(line) });
                 }
-
-                // --- Formato viejo: IF <condición> seguida de la instrucción en la línea de abajo ---
-                var ifViejoMatch = IfViejoRegex.Match(line);
-                if (ifViejoMatch.Success)
+                catch (FormatException ex) when (!ex.Message.StartsWith("El bloque IF") && !ex.Message.StartsWith("La línea"))
                 {
-                    var condition = ParseCondition(ifViejoMatch.Groups[1].Value.Trim());
-                    if (i + 1 >= lines.Count)
-                        throw new FormatException($"La línea {i + 1} (IF) no tiene una instrucción asociada debajo.");
-
-                    i++;
-                    var instruction = ParseInstruction(lines[i]);
-                    steps.Add(new ProgramStep { Condition = condition, Instruction = instruction });
-                    continue;
+                    // Los errores de ParseCondition/ParseInstruction (condición u
+                    // operador inválido, instrucción no reconocida, dirección
+                    // inválida, etc.) no traían número de línea -- se lo agregamos acá,
+                    // en el único lugar donde sabemos con certeza a qué línea del
+                    // editor corresponde 'line'. Los mensajes de más arriba ya lo
+                    // incluyen, así que no se les vuelve a agregar.
+                    throw new FormatException($"Línea {numeroLinea}: {ex.Message}");
                 }
-
-                // --- Marcadores sin efecto ---
-                var lineUpper = line.ToUpperInvariant();
-                if (lineUpper == "BUCLE" || lineUpper == "FIN" || lineUpper == "INICIO" || lineUpper == "INICIO:")
-                    continue;
-
-                // --- Instrucción normal, sin condición ---
-                steps.Add(new ProgramStep { Condition = null, Instruction = ParseInstruction(line) });
             }
 
             return steps;

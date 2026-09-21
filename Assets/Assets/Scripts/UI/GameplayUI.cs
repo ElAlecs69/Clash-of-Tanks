@@ -31,6 +31,15 @@ namespace TanksGame.UI
 
         private readonly List<PanelTanqueHud> panelesTanque = new List<PanelTanqueHud>();
 
+        // Vida que se MUESTRA en el recuadro de cada tanque, que no siempre es la
+        // vida real (tanque.Health) del instante actual: al tanque que esta ronda
+        // recibió un disparo/mina/choque/desgaste se lo sigue mostrando con la
+        // vida de ANTES hasta que BoardView reproduce esa explosión en pantalla
+        // (ver AlActualizarVidaDeTanque más abajo) -- antes el recuadro bajaba de
+        // golpe apenas terminaba de calcularse la ronda, incluso antes de que el
+        // misil/AMT saliera del cañón.
+        private readonly Dictionary<int, float> vidaMostradaPorJugador = new Dictionary<int, float>();
+
         // Referencias vivas de un recuadro de tanque estilo "arcade pixel": barra
         // de vida segmentada, pips de bombas, ícono de escudo y el trocito de log
         // que le corresponde. Se arma una vez en ConstruirPanelesDeTanques() y
@@ -108,6 +117,14 @@ namespace TanksGame.UI
         private float multiplicadorVelocidad = 1f;
         private float temporizadorTurno = 0f;
         private bool partidaTerminada = false;
+        // Cuando el resultado de la ronda ya se conoce (alguien ganó o hubo
+        // empate) pero BoardView todavía está reproduciendo animaciones
+        // (movimientos, disparos, explosiones) de esa misma ronda, el cartel de
+        // resultado espera a que terminen -- antes se mostraba apenas se
+        // calculaba el resultado, mientras el último misil/AMT recién estaba
+        // saliendo del cañón en pantalla.
+        private bool esperandoAnimacionParaMostrarResultado = false;
+        private string mensajeResultadoPendiente;
         private Text textoVelocidad;
         private Text textoResultadoPartida;
         private GameObject panelFinDePartida;
@@ -164,7 +181,29 @@ namespace TanksGame.UI
                 audioSourceMusica.Play();
             }
 
+            if (gameManager.Agentes != null)
+                foreach (var agente in gameManager.Agentes)
+                    vidaMostradaPorJugador[agente.Tank.PlayerId] = agente.Tank.Health;
+
+            if (gameManager.vistaTablero != null)
+                gameManager.vistaTablero.AlActualizarVidaDeTanque += OnVidaDeTanqueActualizada;
+
             ConstruirUI();
+            ActualizarHud();
+        }
+
+        private void OnDestroy()
+        {
+            if (gameManager != null && gameManager.vistaTablero != null)
+                gameManager.vistaTablero.AlActualizarVidaDeTanque -= OnVidaDeTanqueActualizada;
+        }
+
+        // Se dispara desde BoardView en el instante exacto en que la explosión de
+        // ESE tanque en particular ya se reprodujo en pantalla: recién ahí baja su
+        // recuadro de vida, nunca antes.
+        private void OnVidaDeTanqueActualizada(int playerId, int vidaPorcentaje)
+        {
+            vidaMostradaPorJugador[playerId] = vidaPorcentaje;
             ActualizarHud();
         }
 
@@ -186,6 +225,21 @@ namespace TanksGame.UI
                 if (panelConfirmarSalir != null && panelConfirmarSalir.activeSelf) OnCancelarSalir();
                 else if (juegoPausado) OnContinuar();
                 else OnPausa();
+            }
+
+            // Si el resultado de la partida ya se calculó pero la última ronda
+            // todavía se está animando, esperar acá (revisando cada frame) en
+            // vez de mostrar el cartel ya mismo: partidaTerminada ya está en
+            // true desde RevisarFinDePartida, así que sin este chequeo antes
+            // del "return" de más abajo el cartel jamás se mostraría.
+            if (esperandoAnimacionParaMostrarResultado)
+            {
+                if (gameManager != null && gameManager.vistaTablero != null && gameManager.vistaTablero.RondaEnAnimacion)
+                    return;
+
+                esperandoAnimacionParaMostrarResultado = false;
+                MostrarResultadoPartida(mensajeResultadoPendiente);
+                return;
             }
 
             if (partidaTerminada || gameManager == null || juegoPausado) return;
@@ -211,8 +265,37 @@ namespace TanksGame.UI
         private void EjecutarTurnoAutomatico()
         {
             var resultado = gameManager.EjecutarSiguienteTurno();
+
+            // Al tanque que esta ronda NO recibió ningún golpe se le sincroniza la
+            // vida mostrada ya mismo (no hay ninguna explosión que esperar). Al que
+            // sí lo golpearon, su vida mostrada queda como estaba hasta que
+            // OnVidaDeTanqueActualizada la actualice en el instante justo del
+            // impacto -- ver el comentario de vidaMostradaPorJugador.
+            var golpeados = ObtenerJugadoresGolpeadosEstaRonda();
+            foreach (var agente in gameManager.Agentes)
+            {
+                if (golpeados.Contains(agente.Tank.PlayerId)) continue;
+                vidaMostradaPorJugador[agente.Tank.PlayerId] = agente.Tank.Health;
+            }
+
             ActualizarHud();
             RevisarFinDePartida(resultado);
+        }
+
+        private HashSet<int> ObtenerJugadoresGolpeadosEstaRonda()
+        {
+            var turno = gameManager.Turno;
+            var golpeados = new HashSet<int>();
+            if (turno == null) return golpeados;
+
+            foreach (var disparo in turno.LastRoundShots)
+                if (disparo.Impacto) golpeados.Add(disparo.TargetId);
+
+            foreach (var evento in turno.LastRoundDamageEvents)
+                foreach (var id in evento.TargetIds)
+                    golpeados.Add(id);
+
+            return golpeados;
         }
 
         // Usa el GameResult real que ya calcula TurnManager (PlayerWins / Draw /
@@ -225,12 +308,14 @@ namespace TanksGame.UI
             {
                 var ganador = gameManager.Turno.AliveTanks().First();
                 partidaTerminada = true;
-                MostrarResultadoPartida($"GANADOR: JUGADOR {ganador.PlayerId}");
+                mensajeResultadoPendiente = $"GANADOR: TANQUE {ganador.PlayerId}";
+                esperandoAnimacionParaMostrarResultado = true;
             }
             else if (resultado == GameResult.Draw)
             {
                 partidaTerminada = true;
-                MostrarResultadoPartida("EMPATE");
+                mensajeResultadoPendiente = "EMPATE";
+                esperandoAnimacionParaMostrarResultado = true;
             }
         }
 
@@ -1176,7 +1261,7 @@ namespace TanksGame.UI
             hud.encabezado.fontStyle = FontStyle.Bold;
             hud.encabezado.alignment = TextAnchor.MiddleCenter;
             hud.encabezado.color = new Color(0.05f, 0.05f, 0.06f);
-            hud.encabezado.text = $"JUGADOR {tanque.PlayerId}";
+            hud.encabezado.text = $"TANQUE {tanque.PlayerId}";
             var encRect = hud.encabezado.rectTransform;
             encRect.anchorMin = Vector2.zero;
             encRect.anchorMax = Vector2.one;
@@ -1436,7 +1521,10 @@ namespace TanksGame.UI
             for (int i = 0; i < agentes.Count && i < panelesTanque.Count; i++)
             {
                 var tanque = agentes[i].Tank;
-                ActualizarPanelTanqueArcade(panelesTanque[i], tanque, log);
+                float vidaMostrada = vidaMostradaPorJugador.TryGetValue(tanque.PlayerId, out var v)
+                    ? v
+                    : tanque.Health;
+                ActualizarPanelTanqueArcade(panelesTanque[i], tanque, log, vidaMostrada);
             }
         }
 
@@ -1445,12 +1533,17 @@ namespace TanksGame.UI
         // barra de energía de arcade), prende los pips de bombas y de escudo, y
         // arma el trocito de log de este tanque. Si el tanque cayó, en vez de
         // tocar todo lo anterior simplemente se muestra el sello "DESTRUIDO".
-        private void ActualizarPanelTanqueArcade(PanelTanqueHud hud, Tank tanque, List<string> log)
+        private void ActualizarPanelTanqueArcade(PanelTanqueHud hud, Tank tanque, List<string> log, float vidaMostrada)
         {
-            hud.overlayDestruido.SetActive(!tanque.IsAlive);
-            if (!tanque.IsAlive) return;
+            // Igual que la vida: si el tanque murió esta ronda, el sello "DESTRUIDO"
+            // tampoco aparece de golpe -- espera al mismo instante en que
+            // OnVidaDeTanqueActualizada baja vidaMostrada a 0 (justo cuando la
+            // explosión ya se reprodujo en pantalla).
+            bool mostrarDestruido = !tanque.IsAlive && vidaMostrada <= 0f;
+            hud.overlayDestruido.SetActive(mostrarDestruido);
+            if (mostrarDestruido) return;
 
-            float porcentaje = Mathf.Clamp(tanque.Health, 0f, 100f);
+            float porcentaje = Mathf.Clamp(vidaMostrada, 0f, 100f);
             Color colorVida = porcentaje > 60f
                 ? new Color(0.35f, 0.9f, 0.35f)
                 : porcentaje > 30f
@@ -1484,6 +1577,7 @@ namespace TanksGame.UI
 
             var lineasDelTanque = log
                 .Where(l => l.StartsWith($"Jugador {tanque.PlayerId}") && !l.Contains("IF") && !l.Contains("ESPERA"))
+                .Select(l => l.Replace("Jugador", "Tanque"))
                 .ToList();
 
             hud.textoLog.text = lineasDelTanque.Count == 0

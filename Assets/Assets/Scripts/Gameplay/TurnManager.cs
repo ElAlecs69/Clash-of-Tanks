@@ -128,7 +128,7 @@ namespace TanksGame.Gameplay
                 }
 
                 bool shouldExecute = step.Condition == null ||
-                    step.Condition.Evaluate(agent.Tank, Radar);
+                    step.Condition.Evaluate(agent.Tank, RadarParaCondicion);
 
                 if (!shouldExecute)
                 {
@@ -374,6 +374,28 @@ namespace TanksGame.Gameplay
         {
             var (hit, dist, _) = CombatResolver.Trace(Board, AliveTanks(), tank.Position, dir);
             return hit != null ? dist : -dist;
+        }
+
+        // Igual que Radar(), pero pensado para usarse como el radarFunc que se le
+        // pasa a Condition.Evaluate. Antes, un RADAR usado como CONDICIÓN de un IF
+        // (ej: "IF (RADAR(N) > 0) { MISIL(N) }") llamaba a Radar() directo y en
+        // silencio: no dejaba ni una línea en el log ni un RadarEvent, así que en
+        // pantalla nunca se veía el barrido -- solo se veía la instrucción del
+        // cuerpo del IF (el MISIL/AMT/etc.), como si el RADAR nunca hubiera
+        // pasado. Ahora deja registrado el escaneo igual que un RADAR usado como
+        // instrucción normal, se cumpla o no la condición.
+        private int RadarParaCondicion(Tank tank, Direction dir)
+        {
+            int valor = Radar(tank, dir);
+            LastRoundLog.Add($"Jugador {tank.PlayerId}: RADAR({dir}) = {valor} (condición del IF).");
+            LastRoundRadars.Add(new RadarEvent
+            {
+                ShooterId = tank.PlayerId,
+                Origin = tank.Position,
+                Dir = dir,
+                Valor = valor
+            });
+            return valor;
         }
 
         private void CheckMines(ref bool huboDanio)

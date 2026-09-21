@@ -39,6 +39,17 @@ namespace TanksGame.UI
     //  modificarlo y volver a guardarlo. El Historial en sí (panel izquierdo) es
     //  permanente: se guarda como JSON en persistentDataPath y sobrevive a cerrar
     //  el juego o a volver a darle Play en el editor de Unity.
+    // DefaultExecutionOrder(-100): garantiza que Update() de esta clase corra
+    // ANTES que el EventSystem procese las teclas del frame (el EventSystem no
+    // fija ningún orden explícito, así que por defecto compite con el nuestro
+    // de forma no determinística). Esto es necesario porque Update() acá
+    // refresca caretAnteriorEditor con la posición actual del cursor -- si
+    // llegara a correr DESPUÉS de que el EventSystem ya entregó un Backspace al
+    // InputField, ese refresco quedaría "adelantado" (con el cursor post-borrado
+    // en vez de pre-borrado) justo antes de que AlCambiarTextoEditor lo necesite,
+    // y el borrado inteligente fallaría esa pulsación en particular (hacía falta
+    // una segunda para que recién ahí funcionara).
+    [DefaultExecutionOrder(-100)]
     public class PantallaProgramacionTanques : MonoBehaviour
     {
         [Header("Colores placeholder (se usan solo si no asignas un sprite abajo)")]
@@ -1022,41 +1033,72 @@ private void AsegurarCursorVisible()
             ActualizarEditorTrasCambio();
         }
 
-        // Sincroniza números de línea, resaltado de sintaxis, altura del
-        // contenido y scroll después de que EditorInputField.KeyPressed()
-        // modifica el texto directamente (Backspace inteligente). No se
-        // depende de que asignar InputField.text dispare onValueChanged por su
-        // cuenta -- se llama explícitamente para que el resultado sea siempre
-        // el mismo, sin importar esa particularidad interna de Unity.
-        private void SincronizarTrasEdicionManualDelEditor()
+        private void AlCambiarTextoEditor(string nuevoTexto)
         {
+            // InputField ya procesó el Backspace. Solo después de ese procesamiento
+            // reemplazamos el borrado de UN carácter por el borrado de la instrucción,
+            // línea vacía o símbolo completo. No tocamos OnUpdateSelected(), que es
+            // quien mantiene la navegación vertical/horizontal del InputField.
+            //
+            // La detección usa el movimiento del cursor (un Backspace borra el
+            // carácter ANTERIOR al cursor y lo retrocede una posición) en vez de mirar
+            // el estado del teclado, así que es exacta siempre que caretAnteriorEditor
+            // refleje el cursor DE ANTES de esta pulsación. Eso lo garantiza Update()
+            // (ver [DefaultExecutionOrder] en la clase), que corre antes que el
+            // EventSystem entregue la tecla al InputField y por eso siempre alcanza a
+            // capturar el cursor tal como quedó tras un clic o una flecha, aunque no
+            // haya habido ningún cambio de texto de por medio.
+            bool debeBorrarInstruccion = campoEditor != null &&
+                                         campoEditor.isFocused &&
+                                         anclaAnteriorEditor == focoAnteriorEditor &&
+                                         !string.IsNullOrEmpty(textoAnteriorEditor) &&
+                                         nuevoTexto.Length == textoAnteriorEditor.Length - 1 &&
+                                         campoEditor.caretPosition == caretAnteriorEditor - 1;
+
+            if (debeBorrarInstruccion)
+            {
+                int caret = Mathf.Clamp(caretAnteriorEditor, 0, textoAnteriorEditor.Length);
+
+                if (caret > 0)
+                {
+                    int inicioLinea = textoAnteriorEditor.LastIndexOf('\n', Mathf.Max(0, caret - 1)) + 1;
+                    int inicioABorrar;
+
+                    if (caret == inicioLinea)
+                    {
+                        inicioABorrar = inicioLinea - 1;
+                    }
+                    else
+                    {
+                        string antesEnLinea = textoAnteriorEditor.Substring(inicioLinea, caret - inicioLinea);
+                        inicioABorrar = inicioLinea + EncontrarInicioTokenABorrar(antesEnLinea);
+                    }
+
+                    inicioABorrar = Mathf.Clamp(inicioABorrar, 0, caret);
+                    string textoPersonalizado = textoAnteriorEditor.Remove(
+                        inicioABorrar, caret - inicioABorrar);
+
+                    campoEditor.text = textoPersonalizado;
+
+                    nuevoTexto = textoPersonalizado;
+                    FijarCursorEnEditor(inicioABorrar);
+                }
+            }
+
             textoAnteriorEditor = campoEditor.text;
             caretAnteriorEditor = campoEditor.caretPosition;
             anclaAnteriorEditor = campoEditor.selectionAnchorPosition;
             focoAnteriorEditor = campoEditor.selectionFocusPosition;
             ultimaPosicionCursorConocida = caretAnteriorEditor;
 
+            // Cada cambio de texto debe recalcular también la altura del contenido.
+            // Este era el punto que hacía que, después de ~11 líneas, Enter siguiera
+            // agregando texto pero el ScrollRect no tuviera contenido adicional al
+            // cual desplazarse.
             ActualizarEditorSinMoverCursor();
 
             if (campoEditor.isFocused && !sincronizandoCursorProgramaticamente)
                 AsegurarCursorVisible();
-        }
-
-        private void AlCambiarTextoEditor(string nuevoTexto)
-        {
-            // El borrado de la instrucción/línea vacía/símbolo completo bajo el
-            // cursor con Backspace ya NO se maneja acá. Este método corría DESPUÉS
-            // de que InputField ya había borrado un carácter, así que solo podía
-            // reconstruir el borrado comparando el texto de antes y de después --
-            // un parche reactivo, un paso por detrás de lo que Unity ya hizo, y
-            // por eso era frágil (a veces hacía falta un segundo Backspace para
-            // que recién ahí surtiera efecto). Ahora se intercepta el Backspace
-            // ANTES de que Unity lo procese, sobrescribiendo KeyPressed() en
-            // EditorInputField (ver esa clase, más abajo), que es el punto de
-            // extensión pensado por Unity para esto. Acá solo queda sincronizar
-            // el resto del editor después de CUALQUIER cambio de texto (tipeo
-            // normal, pegado, flechas, Backspace ya aplicado, etc.).
-            SincronizarTrasEdicionManualDelEditor();
         }
 
         private void ActualizarEditorTrasCambio()
@@ -2610,8 +2652,7 @@ private void AsegurarCursorVisible()
             // eventos. Esto es importante para ↑/↓ porque mantiene internamente
             // m_CaretPosition y m_CaretSelectPosition sin que nuestro código los
             // desincronice. El Backspace especial se reconstruye en AlCambiarTextoEditor().
-            var campo = go.AddComponent<EditorInputField>();
-            campo.Duenio = this;
+            var campo = go.AddComponent<InputField>();
             campo.textComponent = texto;
             campo.lineType = InputField.LineType.MultiLineNewline;
             campo.text = textoInicial;
@@ -2653,67 +2694,6 @@ private void AsegurarCursorVisible()
             campo.caretWidth = 2;
 
             return campo;
-        }
-
-        // InputField personalizado para el editor de scripts: sobrescribe
-        // KeyPressed() para interceptar el Backspace ANTES de que Unity lo
-        // procese, en vez de intentar reconstruirlo DESPUÉS comparando texto
-        // antes/después en onValueChanged (lo que se hacía antes, y era frágil:
-        // a veces hacía falta un segundo Backspace para que surtiera efecto).
-        // KeyPressed() es el punto de extensión que UnityEngine.UI.InputField
-        // expone justamente para esto. Con un Backspace simple (sin selección,
-        // sin Ctrl/Cmd) se borra la instrucción, línea vacía o símbolo completo
-        // bajo el cursor; para cualquier otra tecla (flechas, Enter, Ctrl+Backspace,
-        // con selección activa, etc.) se deja el comportamiento normal de Unity.
-        private class EditorInputField : InputField
-        {
-            public PantallaProgramacionTanques Duenio;
-
-            protected override EditState KeyPressed(Event evt)
-            {
-                bool conModificador = (evt.modifiers & (EventModifiers.Control | EventModifiers.Command)) != 0;
-                bool sinSeleccion = caretPosition == selectionAnchorPosition;
-
-                if (evt.keyCode == KeyCode.Backspace && !conModificador && sinSeleccion && Duenio != null)
-                {
-                    BorrarInstruccionCompleta();
-                    return EditState.Continue;
-                }
-
-                return base.KeyPressed(evt);
-            }
-
-            private void BorrarInstruccionCompleta()
-            {
-                string t = text;
-                int caret = caretPosition;
-                if (caret <= 0 || string.IsNullOrEmpty(t)) return;
-
-                int inicioLinea = t.LastIndexOf('\n', Mathf.Max(0, caret - 1)) + 1;
-                int inicioABorrar;
-
-                if (caret == inicioLinea)
-                {
-                    // El cursor está justo al principio de la línea: un Backspace
-                    // acá borra el salto de línea anterior y fusiona con la línea
-                    // de arriba (igual que en cualquier editor de texto normal).
-                    inicioABorrar = inicioLinea - 1;
-                }
-                else
-                {
-                    string antesEnLinea = t.Substring(inicioLinea, caret - inicioLinea);
-                    inicioABorrar = inicioLinea + Duenio.EncontrarInicioTokenABorrar(antesEnLinea);
-                }
-
-                inicioABorrar = Mathf.Clamp(inicioABorrar, 0, caret);
-
-                text = t.Remove(inicioABorrar, caret - inicioABorrar);
-                caretPosition = inicioABorrar;
-                selectionAnchorPosition = inicioABorrar;
-                selectionFocusPosition = inicioABorrar;
-
-                Duenio.SincronizarTrasEdicionManualDelEditor();
-            }
         }
 
         // Botón de acción "slot" de la barra superior: en vez de un ancho fijo en
@@ -3152,7 +3132,18 @@ private void AsegurarCursorVisible()
         {
             if (botonEliminarScriptRef == null) return;
 
-            bool hayTanques = scriptsPorTanque.Count > 0;
+            // Antes esto miraba scriptsPorTanque (los tanques programados en
+            // ESTA sesión, que arranca vacía cada vez que se vuelve a entrar a
+            // la pantalla) en vez de historial (los scripts guardados en disco,
+            // cargados sí al entrar -- es lo que realmente se ve en el panel
+            // de la izquierda). Por eso el botón quedaba deshabilitado al
+            // reingresar aunque hubiera tanques viejos para borrar, y solo se
+            // habilitaba después de guardar un script nuevo (que recién ahí
+            // agrega algo a scriptsPorTanque). historial ya incluye tanto los
+            // tanques viejos como los nuevos que se guarden esta sesión (ver
+            // OnGuardarScript, que agrega a ambas listas), así que alcanza con
+            // mirar esta sola.
+            bool hayTanques = historial.Count > 0;
             botonEliminarScriptRef.interactable = hayTanques;
 
             if (!hayTanques) modoEliminarActivo = false;
@@ -3260,4 +3251,4 @@ private void AsegurarCursorVisible()
             ActualizarVistaPreviaTanque();
         }
     }
-}
+}//
