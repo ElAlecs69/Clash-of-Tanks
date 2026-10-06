@@ -20,6 +20,34 @@ namespace TanksGame.UI
         [Header("Escena a cargar al iniciar partida")]
         public string nombreEscenaJuego = "SampleScene";
 
+        [Header("Versión, logo del equipo y pantalla de arranque")]
+        [Tooltip("Se muestra abajo a la izquierda como 'Versión X'.")]
+        public string versionJuego = "1.0.0";
+        [Tooltip("Nombre del equipo, debajo del logo (esquina inferior derecha y pantalla de arranque).")]
+        public string nombreEquipo = "GA Corporation";
+        [Tooltip("Logo del equipo (importado como Sprite). Si se deja vacío se busca Resources/logo.")]
+        public Sprite logoEquipo;
+        [Tooltip("Al abrir el juego: logo y nombre con fundido sobre negro, y luego entra el menú. Solo se muestra una vez por ejecución (no al volver desde una partida).")]
+        public bool mostrarSplashInicial = true;
+
+        [Header("Tutorial (sale solo la primera vez y se puede repetir desde Opciones)")]
+        [Tooltip("Parte 1 (izquierda): dos tanques luchando.")]
+        public Sprite tutorialImagenParte1;
+        [Tooltip("Parte 2 (izquierda): un tanque lanzando un misil.")]
+        public Sprite tutorialImagenParte2;
+        [Tooltip("Parte 3 (derecha): el tablero con los tanques personalizados.")]
+        public Sprite tutorialImagenParte3;
+        [Tooltip("Qué tanto se difuminan los bordes de las imágenes del tutorial (efecto viñeta con transparencia). Es una fracción del lado más corto de la imagen: 0 = sin difuminado, 0.15 = suave, 0.3 = muy marcado.")]
+        [Range(0f, 0.4f)] public float tutorialDifuminadoBordes = 0.15f;
+        [Tooltip("Fuente para los títulos y textos del tutorial. Si se deja vacía se usa la fuente por defecto.")]
+        public Font tutorialFuente;
+        [Tooltip("SOLO PARA PRUEBAS: muestra el tutorial cada vez que entras al menú, aunque ya lo hayas visto. Desactívalo para el juego final.")]
+        public bool tutorialMostrarSiempre = false;
+
+        private TutorialJuego tutorial;
+        private RectTransform tituloRectAnimado;
+        private CanvasGroup tituloGrupoAnimado;
+
         [Header("Textos")]
         public string tituloJuego = "CLASH OF TANKS";
 
@@ -116,13 +144,36 @@ namespace TanksGame.UI
             audioSourceMusica.playOnAwake = false;
             audioSourceMusica.loop = true;
             audioSourceMusica.volume = volumenMusica;
+
+            // La música, la animación del título y el tutorial arrancan cuando
+            // entra el menú (EntrarAlMenu / AbrirTutorialSiCorresponde), es decir,
+            // al terminar la pantalla de arranque.
+            ConstruirUI();
+        }
+
+        // El menú ya es visible (terminó el splash, o no hay splash).
+        private void EntrarAlMenu()
+        {
             if (musicaFondo != null)
             {
                 audioSourceMusica.clip = musicaFondo;
                 audioSourceMusica.Play();
             }
 
-            ConstruirUI();
+            if (tituloRectAnimado != null && tituloGrupoAnimado != null)
+                StartCoroutine(AnimarFadeInZoom(tituloRectAnimado, tituloGrupoAnimado, duracionAnimacionTitulo, escalaInicialTitulo));
+        }
+
+        // Tutorial: solo la primera vez que se entra al juego.
+        private void AbrirTutorialSiCorresponde()
+        {
+            if (tutorial != null && (tutorialMostrarSiempre || !TutorialJuego.YaSeVio))
+                tutorial.Abrir();
+        }
+
+        private Sprite ObtenerLogo()
+        {
+            return logoEquipo != null ? logoEquipo : Resources.Load<Sprite>("logo");
         }
 
         private void Update()
@@ -130,6 +181,9 @@ namespace TanksGame.UI
             // Permite cerrar los paneles grandes con ESC, como en el menú de referencia.
             if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
             {
+                // El tutorial va por encima de todo: ESC lo cierra a él primero.
+                if (tutorial != null && tutorial.Visible) { tutorial.Cerrar(); return; }
+
                 if (panelOpciones != null && panelOpciones.activeSelf) OnCerrarOpciones();
                 else if (panelCreditos != null && panelCreditos.activeSelf) OnCerrarCreditos();
             }
@@ -224,7 +278,9 @@ namespace TanksGame.UI
             }
 
             var tituloCanvasGroup = tituloGo.AddComponent<CanvasGroup>();
-            StartCoroutine(AnimarFadeInZoom(tituloRect, tituloCanvasGroup, duracionAnimacionTitulo, escalaInicialTitulo));
+            tituloCanvasGroup.alpha = 0f;                 // se anima en EntrarAlMenu()
+            tituloRectAnimado = tituloRect;
+            tituloGrupoAnimado = tituloCanvasGroup;
 
             // --- Lista de botones, apilados y centrados (4 opciones) ---
             var listaGo = new GameObject("Botones");
@@ -241,8 +297,101 @@ namespace TanksGame.UI
             CrearBotonDeMenu(listaRect, "CRÉDITOS", new Vector2(0, -45), OnCreditos);
             CrearBotonDeMenu(listaRect, "SALIR", new Vector2(0, -135), OnSalir);
 
+            ConstruirVersionYEquipo(canvasGo.transform);
+
             ConstruirPanelOpciones(canvasGo.transform);
             ConstruirPanelCreditos(canvasGo.transform);
+
+            // Se crea al final para que quede por encima de Opciones y Créditos.
+            tutorial = TutorialJuego.Crear(canvasGo.transform, gameObject,
+                new[] { tutorialImagenParte1, tutorialImagenParte2, tutorialImagenParte3 },
+                tutorialFuente, ReproducirClick, tutorialDifuminadoBordes);
+
+            // La pantalla de arranque va al final: queda por encima de todo.
+            if (mostrarSplashInicial && !SplashInicial.YaMostrado)
+            {
+                SplashInicial.Crear(canvasGo.transform, gameObject, ObtenerLogo(), nombreEquipo,
+                    EntrarAlMenu, AbrirTutorialSiCorresponde);
+            }
+            else
+            {
+                EntrarAlMenu();
+                AbrirTutorialSiCorresponde();
+            }
+        }
+
+        // Versión del juego (abajo a la izquierda) y logo del equipo con su nombre
+        // (abajo a la derecha). Se crean antes que los paneles de Opciones y Créditos
+        // para que esos paneles queden por encima.
+        private void ConstruirVersionYEquipo(Transform padre)
+        {
+            var fuente = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            var contornoColor = new Color(0f, 0f, 0f, 0.9f);
+
+            // --- Versión ---
+            var versionGo = new GameObject("Version", typeof(RectTransform));
+            versionGo.transform.SetParent(padre, false);
+            var versionTexto = versionGo.AddComponent<Text>();
+            versionTexto.font = fuente;
+            versionTexto.text = "Versión " + versionJuego;
+            versionTexto.fontSize = 22;
+            versionTexto.fontStyle = FontStyle.Bold;
+            versionTexto.alignment = TextAnchor.LowerLeft;
+            versionTexto.color = new Color(0.92f, 0.92f, 0.92f, 0.9f);
+            versionTexto.raycastTarget = false;
+            var versionContorno = versionGo.AddComponent<Outline>();
+            versionContorno.effectColor = contornoColor;
+            versionContorno.effectDistance = new Vector2(1.5f, -1.5f);
+            var versionRect = versionGo.GetComponent<RectTransform>();
+            versionRect.anchorMin = versionRect.anchorMax = new Vector2(0f, 0f);
+            versionRect.pivot = new Vector2(0f, 0f);
+            versionRect.sizeDelta = new Vector2(320f, 40f);
+            versionRect.anchoredPosition = new Vector2(28f, 22f);
+
+            // --- Logo del equipo + nombre debajo ---
+            var equipoGo = new GameObject("Equipo", typeof(RectTransform));
+            equipoGo.transform.SetParent(padre, false);
+            var equipoRect = equipoGo.GetComponent<RectTransform>();
+            equipoRect.anchorMin = equipoRect.anchorMax = new Vector2(1f, 0f);
+            equipoRect.pivot = new Vector2(1f, 0f);
+            equipoRect.sizeDelta = new Vector2(240f, 150f);
+            equipoRect.anchoredPosition = new Vector2(-28f, 18f);
+
+            var nombreGo = new GameObject("Nombre", typeof(RectTransform));
+            nombreGo.transform.SetParent(equipoRect, false);
+            var nombreTexto = nombreGo.AddComponent<Text>();
+            nombreTexto.font = fuente;
+            nombreTexto.text = nombreEquipo;
+            nombreTexto.fontSize = 22;
+            nombreTexto.fontStyle = FontStyle.Bold;
+            nombreTexto.alignment = TextAnchor.MiddleCenter;
+            nombreTexto.color = new Color(0.92f, 0.92f, 0.92f, 0.95f);
+            nombreTexto.raycastTarget = false;
+            var nombreContorno = nombreGo.AddComponent<Outline>();
+            nombreContorno.effectColor = contornoColor;
+            nombreContorno.effectDistance = new Vector2(1.5f, -1.5f);
+            var nombreRect = nombreGo.GetComponent<RectTransform>();
+            nombreRect.anchorMin = new Vector2(0f, 0f);
+            nombreRect.anchorMax = new Vector2(1f, 0f);
+            nombreRect.pivot = new Vector2(0.5f, 0f);
+            nombreRect.sizeDelta = new Vector2(0f, 34f);
+            nombreRect.anchoredPosition = Vector2.zero;
+
+            var logo = ObtenerLogo();
+            if (logo != null)
+            {
+                var logoGo = new GameObject("Logo", typeof(RectTransform));
+                logoGo.transform.SetParent(equipoRect, false);
+                var logoImagen = logoGo.AddComponent<Image>();
+                logoImagen.sprite = logo;
+                logoImagen.preserveAspect = true;
+                logoImagen.raycastTarget = false;
+                var logoRect = logoGo.GetComponent<RectTransform>();
+                logoRect.anchorMin = logoRect.anchorMax = new Vector2(0.5f, 0f);
+                logoRect.pivot = new Vector2(0.5f, 0f);
+                logoRect.sizeDelta = new Vector2(104f, 104f);
+                logoRect.anchoredPosition = new Vector2(0f, 38f);
+            }
         }
 
         private void PrepararVideoFondo(RawImage destino)
@@ -456,7 +605,8 @@ namespace TanksGame.UI
             textoCalidad = CrearSelectorCiclo(contenedorRect, "Calidad gráfica", new Vector2(0, -420),
                 NombresCalidad[indiceCalidad], CambiarCalidad);
 
-            CrearBotonTextoSimple(contenedorRect, "VOLVER", new Vector2(0, -510), OnCerrarOpciones);
+            CrearBotonTextoSimple(contenedorRect, "VER TUTORIAL", new Vector2(0, -480), OnVerTutorial);
+            CrearBotonTextoSimple(contenedorRect, "VOLVER", new Vector2(0, -540), OnCerrarOpciones);
 
             panelOpciones.SetActive(false);
         }
@@ -497,6 +647,7 @@ namespace TanksGame.UI
         }
 
         private void OnOpciones() => panelOpciones.SetActive(true);
+        private void OnVerTutorial() { if (tutorial != null) tutorial.Abrir(); }
         private void OnCerrarOpciones() => panelOpciones.SetActive(false);
 
         // ------------------------------------------------------------------

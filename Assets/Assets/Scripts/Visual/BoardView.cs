@@ -707,7 +707,14 @@ namespace TanksGame.Visual
                         var rendererCelda = celda.GetComponent<Renderer>();
                         if (rendererCelda != null)
                         {
-                            rendererCelda.material.color = Color.white;
+                            // CreatePrimitive() deja puesto el material por defecto de
+                            // Unity, que usa el shader "Standard" del Built-in Render
+                            // Pipeline -- el Editor lo disimula, pero en un build
+                            // exportado (con este proyecto en URP) ese shader no
+                            // existe y la celda se ve magenta ("shader de error").
+                            // Hay que asignarle explícitamente el mismo shader de URP
+                            // que usa el resto del tablero (montañas, tanques, etc.).
+                            rendererCelda.material = new Material(ObtenerShaderEstandar()) { color = Color.white };
                             rendererCelda.material.mainTexture = GenerarTexturaCelda(colorCelda);
                         }
                     }
@@ -2117,7 +2124,10 @@ namespace TanksGame.Visual
             var renderer = pieza.GetComponent<Renderer>();
             if (renderer != null)
             {
-                renderer.material.color = color;
+                // Igual que con las celdas del tablero: CreatePrimitive() deja el
+                // material por defecto (shader Standard del Built-in Render
+                // Pipeline), que en un build con URP se ve magenta.
+                renderer.material = new Material(ObtenerShaderEstandar()) { color = color };
                 AjustarBrillo(renderer.material, 0.05f);
             }
             var collider = pieza.GetComponent<Collider>();
@@ -2263,6 +2273,10 @@ namespace TanksGame.Visual
                         var renderer = go.GetComponent<Renderer>();
                         if (renderer != null)
                         {
+                            // Mismo problema que en ConstruirCeldas(): sin esto, la
+                            // cápsula de respaldo queda con el shader Standard del
+                            // Built-in Render Pipeline y se ve magenta en el build.
+                            renderer.material = new Material(ObtenerShaderEstandar());
                             var colorBase = PaletaSkins.ObtenerColorPrincipal(skin.Color);
                             AplicarTexturaPrincipal(renderer.material, PaletaSkins.GenerarTexturaPatron(skin.Patron, colorBase));
                         }
@@ -3188,7 +3202,8 @@ namespace TanksGame.Visual
             var colliderProyectil = proyectilGo.GetComponent<Collider>();
             if (colliderProyectil != null) Destroy(colliderProyectil);
             var rendererProyectil = proyectilGo.GetComponent<Renderer>();
-            if (rendererProyectil != null) rendererProyectil.material.color = colorProyectil;
+            if (rendererProyectil != null)
+                rendererProyectil.material = new Material(ObtenerShaderEstandar()) { color = colorProyectil };
 
             var direccionVuelo = (destino - origen);
             var rotacionVuelo = direccionVuelo.sqrMagnitude > 0.0001f
@@ -3287,7 +3302,7 @@ namespace TanksGame.Visual
             var colliderBala = balaGo.GetComponent<Collider>();
             if (colliderBala != null) Destroy(colliderBala);
             var rendererBala = balaGo.GetComponent<Renderer>();
-            if (rendererBala != null) rendererBala.material.color = colorBala;
+            if (rendererBala != null) rendererBala.material = new Material(ObtenerShaderEstandar()) { color = colorBala };
             balaGo.transform.rotation = rotacion;
 
             var rastro = balaGo.AddComponent<TrailRenderer>();
@@ -3317,7 +3332,7 @@ namespace TanksGame.Visual
             var colliderChispa = chispaGo.GetComponent<Collider>();
             if (colliderChispa != null) Destroy(colliderChispa);
             var rendererChispa = chispaGo.GetComponent<Renderer>();
-            if (rendererChispa != null) rendererChispa.material.color = colorBala;
+            if (rendererChispa != null) rendererChispa.material = new Material(ObtenerShaderEstandar()) { color = colorBala };
             Destroy(chispaGo, 0.08f);
         }
 
@@ -3355,7 +3370,7 @@ namespace TanksGame.Visual
             var rendererFlash = flashGo.GetComponent<Renderer>();
             if (rendererFlash != null)
             {
-                rendererFlash.material.color = new Color(1f, 0.85f, 0.4f);
+                rendererFlash.material = new Material(ObtenerShaderEstandar()) { color = new Color(1f, 0.85f, 0.4f) };
                 AjustarBrillo(rendererFlash.material, 1.5f);
             }
 
@@ -3385,7 +3400,7 @@ namespace TanksGame.Visual
             var rendererBola = bolaGo.GetComponent<Renderer>();
             if (rendererBola != null)
             {
-                rendererBola.material.color = new Color(1f, 0.5f, 0.05f);
+                rendererBola.material = new Material(ObtenerShaderEstandar()) { color = new Color(1f, 0.5f, 0.05f) };
                 AjustarBrillo(rendererBola.material, 2f);
             }
 

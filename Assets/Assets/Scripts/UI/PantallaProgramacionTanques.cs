@@ -734,7 +734,11 @@ namespace TanksGame.UI
                 ("AMT (dir)", "AMT()"),
                 ("MINA", "MINA"),
                 ("MISIL (dir)", "MISIL()"),
-                ("RADAR (dir)", "RADAR()"),
+                // RADAR viene en 3 variantes con la comparación ya incluida: el jugador
+                // solo elige la dirección y escribe el número (ej. RADAR(N)<0).
+                ("RADAR (dir) <", "RADAR()<"),
+                ("RADAR (dir) >", "RADAR()>"),
+                ("RADAR (dir) =", "RADAR()="),
                 ("IF ( ) { }", "IF ( ) {\n    \n}"),
                 ("ESCUDO", "ESCUDO"),
                 ("ESPERAR", "ESPERAR"),
@@ -2339,6 +2343,10 @@ private void AsegurarCursorVisible()
             campoEditor.text = texto;
 
             int nuevaPosicion = indice + reemplazo.Length;
+            // Si la instrucción ya trae su comparación pegada (RADAR(N)<, RADAR(N)>, RADAR(N)=),
+            // el cursor se coloca DESPUÉS del operador para poder escribir el número directo.
+            while (nuevaPosicion < texto.Length && (texto[nuevaPosicion] == '<' || texto[nuevaPosicion] == '>' || texto[nuevaPosicion] == '='))
+                nuevaPosicion++;
             ActualizarEditorSinMoverCursor();
             FijarCursorEnEditor(nuevaPosicion);
         }

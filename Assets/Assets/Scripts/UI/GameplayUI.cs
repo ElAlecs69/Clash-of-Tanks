@@ -451,6 +451,12 @@ namespace TanksGame.UI
 
             // --- Botón de pausa (esquina superior, centrado) ---
             CrearBotonPausa(canvasGo.transform);
+
+            // --- Rosa de los vientos (lado derecho, a media altura): gira con la
+            // cámara para que la N siempre señale el norte del tablero. ---
+            Camera camaraRosa = gameManager.vistaTablero != null ? gameManager.vistaTablero.camaraJuego : null;
+            RosaDeLosVientos.Crear(canvasGo.transform, new Vector2(0.92f, 0.465f), 170f, camaraRosa);
+
             ConstruirPanelPausa(canvasGo.transform);
             ConstruirPanelConfirmarSalir(canvasGo.transform);
         }
