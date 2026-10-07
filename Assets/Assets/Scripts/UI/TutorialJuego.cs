@@ -84,9 +84,9 @@ namespace TanksGame.UI
         }
 
         private static readonly string InstruccionesColumnaA =
-            Entrada("MOV(dir)", "Avanza una casilla. Si chocas con un obstáculo u otro tanque, te hace daño (-12%).") + "\n\n" +
-            Entrada("AMT(dir)", "Ráfaga de ametralladora: daña (-25%) al primer tanque de esa línea. No gasta munición.") + "\n\n" +
-            Entrada("MISIL(dir)", "También daña (-25%) al primer tanque de la línea, pero gasta 1 de tus misiles. Los obstáculos lo bloquean.") + "\n\n" +
+            Entrada("MOV(dir)", "Avanza una casilla. Si chocas con un obstáculo (roca, chatarra) pierdes 6%; si chocas con otro tanque, ambos pierden 8%. Si pisas un hospital, recuperas 10% de vida.") + "\n\n" +
+            Entrada("AMT(dir)", "Ráfaga de ametralladora: daña (-12%) al primer tanque u hospital de esa línea. No gasta munición.") + "\n\n" +
+            Entrada("MISIL(dir)", "También daña (-25%) al primer tanque u hospital de la línea, pero gasta 1 de tus misiles. Los obstáculos lo bloquean. Si no impacta a nadie, explota y daña a los tanques vecinos: -10% en las 4 casillas conexas y -8% en las diagonales.") + "\n\n" +
             Entrada("MINA", "Deja una mina en tu casilla. Se arma en la ronda siguiente y daña (-20%) al tanque que termine encima.") + "\n\n" +
             Entrada("ESCUDO", "Te protege de todo daño durante esa ronda.");
 

@@ -2815,6 +2815,136 @@ namespace TanksGame.Visual
             }
         }
 
+        // ---------------------------------------------------------------------
+        // ROCAS Y HOSPITALES: se dibujan una sola vez, justo después de Construir()
+        // (que recrea contenedorTanques desde cero, así que no hace falta limpiar
+        // nada a mano: Limpiar() ya los destruye junto con ese contenedor).
+        // ---------------------------------------------------------------------
+        private readonly Dictionary<Vector2Int, Transform> hospitalesVisuales = new Dictionary<Vector2Int, Transform>();
+        private Transform contenedorRocasHospitales;
+
+        public void ColocarRocasYHospitales(IEnumerable<Vector2Int> rocas, IEnumerable<Vector2Int> hospitales)
+        {
+            if (contenedorTanques == null) return;
+
+            hospitalesVisuales.Clear();
+            var contenedor = new GameObject("RocasYHospitales").transform;
+            contenedor.SetParent(contenedorTanques, false);
+            contenedorRocasHospitales = contenedor;
+
+            if (hospitales != null)
+                foreach (var celda in hospitales)
+                    CrearHospitalVisual(contenedor, celda);
+
+            if (rocas != null)
+            {
+                var colorRoca = ObtenerPaletaBioma().roca;
+                foreach (var celda in rocas)
+                    CrearRocaVisual(contenedor, celda, colorRoca);
+            }
+        }
+
+        // Una roca grande y angulosa (la misma malla irregular de las montañas,
+        // en pequeño) con una piedra más chica pegada, tintada según el bioma.
+        // La semilla sale de la celda: cada roca es distinta pero siempre igual
+        // para la misma celda.
+        private void CrearRocaVisual(Transform contenedor, Vector2Int celda, Color colorRoca)
+        {
+            float u = tamanoCelda;
+            int semilla = unchecked(celda.x * 73856093 ^ celda.y * 19349663 ^ 4242);
+            var rng = new System.Random(semilla);
+
+            var raiz = new GameObject($"Roca_{celda.x}_{celda.y}").transform;
+            raiz.SetParent(contenedor, false);
+            raiz.position = PuntoDeFuegoEnCelda(celda.x, celda.y, -0.01f * u);
+
+            var principal = CrearMontanaIrregular(0.40f * u, 0.80f * u, semilla, 0.80f * u, 14);
+            principal.name = "RocaPrincipal";
+            principal.transform.SetParent(raiz, false);
+            principal.transform.localRotation = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+            PintarYLimpiar(principal, Color.Lerp(colorRoca, new Color(0.3f, 0.27f, 0.22f), 0.15f + (float)rng.NextDouble() * 0.35f));
+
+            float signoX = rng.NextDouble() < 0.5 ? -1f : 1f;
+            float signoZ = rng.NextDouble() < 0.5 ? -1f : 1f;
+            var piedra = CrearMontanaIrregular(0.22f * u, 0.42f * u, semilla + 17, 0.42f * u, 10);
+            piedra.name = "RocaChica";
+            piedra.transform.SetParent(raiz, false);
+            piedra.transform.localPosition = new Vector3(0.22f * u * signoX, 0f, 0.20f * u * signoZ);
+            piedra.transform.localRotation = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+            PintarYLimpiar(piedra, Color.Lerp(colorRoca, new Color(0.3f, 0.27f, 0.22f), 0.3f + (float)rng.NextDouble() * 0.35f));
+        }
+
+        // Hospital: plataforma plana (los tanques pueden pararse encima para
+        // REPARAR, así que NO tiene volumen) blanca con borde verde y cruz roja.
+        private void CrearHospitalVisual(Transform contenedor, Vector2Int celda)
+        {
+            float u = tamanoCelda;
+
+            var raiz = new GameObject($"Hospital_{celda.x}_{celda.y}").transform;
+            raiz.SetParent(contenedor, false);
+            raiz.position = PuntoDeFuegoEnCelda(celda.x, celda.y, 0f);
+
+            CrearPieza(raiz, PrimitiveType.Cube, new Vector3(0f, 0.015f, 0f),
+                new Vector3(0.90f * u, 0.03f, 0.90f * u), new Color(0.2f, 0.6f, 0.35f));
+            CrearPieza(raiz, PrimitiveType.Cube, new Vector3(0f, 0.035f, 0f),
+                new Vector3(0.78f * u, 0.03f, 0.78f * u), new Color(0.94f, 0.96f, 0.94f));
+            CrearPieza(raiz, PrimitiveType.Cube, new Vector3(0f, 0.06f, 0f),
+                new Vector3(0.50f * u, 0.02f, 0.15f * u), new Color(0.82f, 0.1f, 0.1f));
+            CrearPieza(raiz, PrimitiveType.Cube, new Vector3(0f, 0.06f, 0f),
+                new Vector3(0.15f * u, 0.02f, 0.50f * u), new Color(0.82f, 0.1f, 0.1f));
+
+            hospitalesVisuales[celda] = raiz;
+        }
+
+        // Refleja en pantalla el daño a un hospital: chapa oscurecida y humo según su
+        // vida (misma apariencia que un tanque dañado) y, si fue destruido, lo
+        // reemplaza por escombros (una roca quemada), igual que en la lógica donde
+        // su casilla pasa a ser un obstáculo.
+        private void AplicarDanoVisualHospital(HospitalDanoEvent evento)
+        {
+            if (evento == null) return;
+            if (!hospitalesVisuales.TryGetValue(evento.Celda, out var raiz) || raiz == null) return;
+
+            if (evento.Destruido)
+            {
+                Destroy(raiz.gameObject);
+                hospitalesVisuales.Remove(evento.Celda);
+                if (contenedorRocasHospitales != null)
+                    CrearRocaVisual(contenedorRocasHospitales, evento.Celda, new Color(0.18f, 0.16f, 0.15f));
+                return;
+            }
+
+            AplicarEstadoDeDano(raiz, evento.VidaPorcentajeDespues);
+        }
+
+        // Pulso verde que sube y se encoge sobre el tanque que se cura en un hospital.
+        private System.Collections.IEnumerator PulsoCuracion(Vector3 posicion)
+        {
+            var esfera = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            esfera.transform.SetParent(transform, true);
+            esfera.transform.position = posicion;
+            var col = esfera.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+            var rend = esfera.GetComponent<Renderer>();
+            if (rend != null)
+            {
+                rend.material = new Material(ObtenerShaderEstandar()) { color = new Color(0.25f, 1f, 0.45f) };
+                AjustarBrillo(rend.material, 1.5f);
+            }
+
+            const float duracion = 0.5f;
+            float t = 0f;
+            while (t < duracion)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / duracion);
+                esfera.transform.position = posicion + Vector3.up * (0.5f * k * tamanoCelda);
+                esfera.transform.localScale = Vector3.one * Mathf.Lerp(0.15f, 0.45f, Mathf.Sin(k * Mathf.PI)) * tamanoCelda;
+                yield return null;
+            }
+            Destroy(esfera);
+        }
+
         public void QuitarMinaVisual(Vector2Int celda)
         {
             if (!minasVisuales.TryGetValue(celda, out var go)) return;
@@ -2981,6 +3111,9 @@ namespace TanksGame.Visual
                         yield return rutina;
                     break;
                 }
+                case DamageEventType.Curacion:
+                    yield return PulsoCuracion(puntoMundo);
+                    break;
                 case DamageEventType.Desgaste:
                     // Sin explosión (no hay proyectil ni detonación real):
                     // una sacudida breve del propio tanque contra el
@@ -3066,6 +3199,31 @@ namespace TanksGame.Visual
             {
                 yield return VueloDeMisil(origen, destino);
                 ReproducirEfecto(sonidoImpactoMisil);
+
+                // Si el misil no impactó a ningún tanque, su onda expansiva alcanza
+                // las 8 casillas vecinas (las 4 conexas con más fuerza, las 4
+                // diagonales con menos): se dibujan explosiones más chicas ahí,
+                // en paralelo con la explosión central.
+                if (!disparo.Impacto)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        for (int dy = -1; dy <= 1; dy++)
+                        {
+                            if (dx == 0 && dy == 0) continue;
+                            int cx = disparo.ImpactCell.x + dx;
+                            int cy = disparo.ImpactCell.y + dy;
+                            if (cx < 0 || cx >= _anchoTablero || cy < 0 || cy >= _altoTablero) continue;
+
+                            bool conexa = dx == 0 || dy == 0;
+                            StartCoroutine(ExplosionConRetraso(
+                                PuntoDeFuegoEnCelda(cx, cy, alturaCanon),
+                                conexa ? 0.75f : 0.55f,
+                                conexa ? 0.05f : 0.10f));
+                        }
+                    }
+                }
+
                 yield return Explosion(destino, 1.3f);
             }
             else
@@ -3089,6 +3247,33 @@ namespace TanksGame.Visual
                 AplicarEstadoDeDano(visualObjetivo, vidaFinal); // queda la chatarra, no se oculta, si TargetDestruido
                 AlActualizarVidaDeTanque?.Invoke(disparo.TargetId, vidaFinal);
             }
+
+            // Hospitales dañados (directo o por área): se oscurecen/humean o, si
+            // quedaron destruidos, se reemplazan por escombros.
+            AplicarDanoVisualHospital(disparo.HospitalImpactado);
+            if (disparo.AreaHospitales != null)
+                foreach (var hospitalArea in disparo.AreaHospitales)
+                    AplicarDanoVisualHospital(hospitalArea);
+
+            // Tanques alcanzados por la onda expansiva de un MISIL que no impactó a
+            // nadie: se les aplica su apariencia dañada y se baja su vida recién
+            // ahora, con la explosión ya en pantalla.
+            if (disparo.AreaObjetivos != null)
+            {
+                foreach (var objetivoArea in disparo.AreaObjetivos)
+                {
+                    if (!tanquesVisuales.TryGetValue(objetivoArea.TargetId, out var visualArea) || visualArea == null) continue;
+                    int vidaArea = objetivoArea.Destruido ? 0 : objetivoArea.VidaPorcentajeDespues;
+                    AplicarEstadoDeDano(visualArea, vidaArea);
+                    AlActualizarVidaDeTanque?.Invoke(objetivoArea.TargetId, vidaArea);
+                }
+            }
+        }
+
+        private System.Collections.IEnumerator ExplosionConRetraso(Vector3 posicion, float escala, float retraso)
+        {
+            if (retraso > 0f) yield return new WaitForSeconds(retraso);
+            yield return Explosion(posicion, escala);
         }
 
         // ---------------------------------------------------------------------

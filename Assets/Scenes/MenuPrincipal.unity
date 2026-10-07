@@ -286,6 +286,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TanksGame.UI.MenuPrincipal
   nombreEscenaJuego: PantallaProgramacionTanques
+  versionJuego: 1.0.0
+  nombreEquipo: GA Corporation
+  logoEquipo: {fileID: 21300000, guid: 7947af16ca691994fbff2a1325eb1ddc, type: 3}
+  mostrarSplashInicial: 1
+  tutorialImagenParte1: {fileID: 21300000, guid: 388c272c431b1494f848500825d40c77, type: 3}
+  tutorialImagenParte2: {fileID: 21300000, guid: cf7fa37bba1f43c4cbff7a1c385709cf, type: 3}
+  tutorialImagenParte3: {fileID: 21300000, guid: d2d83104d542fbf4791aefd34f8a0d3c, type: 3}
+  tutorialDifuminadoBordes: 0.15
+  tutorialFuente: {fileID: 0}
+  tutorialMostrarSiempre: 0
   tituloJuego: CLASH OF TANKS
   spriteTituloJuego: {fileID: 21300000, guid: bc0aa9ccfe5b0c344a7f03da4a12156f, type: 3}
   tamanoLogo: {x: 700, y: 350}
@@ -294,7 +304,7 @@ MonoBehaviour:
   escalaInicialTitulo: 0.6
   fondoOpciones: {fileID: 21300000, guid: 42b5e3cbe7906d44e9f0e258a7e3c6b0, type: 3}
   fondoCreditos: {fileID: 21300000, guid: f3b61d14439ec5a458794d22c04bea13, type: 3}
-  sonidoClick: {fileID: 8300000, guid: 6ce38d9582242504a8fad6c69ba1e0d7, type: 3}
+  sonidoClick: {fileID: 8300000, guid: 93e894679fff52147b936feb3eabaea6, type: 3}
   sonidoCambio: {fileID: 8300000, guid: 1d4ec4ebc029f914a8864e139064c950, type: 3}
   musicaFondo: {fileID: 8300000, guid: 158cc6e6f686bce4390459c3c9581472, type: 3}
   volumenMusica: 0.5
@@ -303,11 +313,11 @@ MonoBehaviour:
   textoCreditos: 'CLASH OF TANKS
 
 
-    Desarrollado por: GodAlecs
+    Desarrollado por: GA Corporation
 
 
-    Hecho con
-    Unity'
+    Hecho
+    con Unity'
 --- !u!4 &1770646202
 Transform:
   m_ObjectHideFlags: 0

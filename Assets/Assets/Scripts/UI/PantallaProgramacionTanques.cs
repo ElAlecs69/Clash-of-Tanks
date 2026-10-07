@@ -161,6 +161,16 @@ namespace TanksGame.UI
         private const int MISILES_MINIMO = 1;
         private const int MISILES_MAXIMO = 20;
         private Text textoMisilesPorTanque;
+
+        // Rocas (obstáculos) y hospitales que se reparten al azar por el tablero.
+        // Entre las dos cosas no pueden pasar del 90% de las casillas (redondeado
+        // hacia abajo): ver GridBoard.MaximoCasillasEspeciales. Por defecto 0
+        // rocas y 1 hospital (lo más parecido a como era antes).
+        private int rocasElegidas = 0;
+        private int hospitalesElegidos = 1;
+        private Text textoRocas;
+        private Text textoHospitales;
+        private Text textoMaximoEspeciales;
         // Un botón por bioma (Pradera/Nieve/Selvático) para poder resaltar cuál
         // está elegido en cada momento (ver ActualizarBotonesBioma).
         private readonly Dictionary<BoardView.Bioma, Image> fondosBotonBioma = new Dictionary<BoardView.Bioma, Image>();
@@ -1875,7 +1885,7 @@ private void AsegurarCursorVisible()
             // CanvasGroup para el fundido de entrada/salida (alfa 0 -> 1).
             fundidoConfigurarPartida = overlayConfigurarPartida.AddComponent<CanvasGroup>();
             fundidoConfigurarPartida.alpha = 0f;
-            var caja = CrearRect(overlayConfigurarPartida.transform, "Caja", Vector2.zero, new Vector2(620, 470), colorPanel);
+            var caja = CrearRect(overlayConfigurarPartida.transform, "Caja", Vector2.zero, new Vector2(620, 570), colorPanel);
             var cajaRect = caja.GetComponent<RectTransform>();
             cajaRect.anchorMin = new Vector2(0.5f, 0.5f);
             cajaRect.anchorMax = new Vector2(0.5f, 0.5f);
@@ -1913,15 +1923,29 @@ private void AsegurarCursorVisible()
             CrearFlecha(caja.transform, "BotonMasMisiles", "+", new Vector2(370, 305),
                 () => CambiarMisilesPorTanque(1));
 
+            // --- Rocas y hospitales (dos columnas, cada una con -5 / -1 / valor / +1 / +5) ---
+            CrearTexto(caja.transform, "EtiquetaRocas", "ROCAS", new Vector2(0, 365), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoRocas = CrearControlCantidadEspecial(caja.transform, "Rocas", 0f, 392f, () => CambiarRocas(-5),
+                () => CambiarRocas(-1), () => CambiarRocas(1), () => CambiarRocas(5));
+
+            CrearTexto(caja.transform, "EtiquetaHospitales", "HOSPITALES", new Vector2(310, 365), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoHospitales = CrearControlCantidadEspecial(caja.transform, "Hospitales", 310f, 392f, () => CambiarHospitales(-5),
+                () => CambiarHospitales(-1), () => CambiarHospitales(1), () => CambiarHospitales(5));
+
+            textoMaximoEspeciales = CrearTexto(caja.transform, "TextoMaximoEspeciales", "", new Vector2(20, 440), new Vector2(580, 40),
+                12, FontStyle.Normal, TextAnchor.MiddleCenter, colorTextoSecundario);
+
             // --- Confirmar / cancelar ---
-            var botonConfirmar = CrearRect(caja.transform, "BotonConfirmar", new Vector2(20, 390), new Vector2(280, 50), colorBotonAccentoVerde);
+            var botonConfirmar = CrearRect(caja.transform, "BotonConfirmar", new Vector2(20, 500), new Vector2(280, 50), colorBotonAccentoVerde);
             var confirmarBtn = botonConfirmar.AddComponent<Button>();
             confirmarBtn.targetGraphic = botonConfirmar.GetComponent<Image>();
             confirmarBtn.onClick.AddListener(ConfirmarIniciarPartida);
             CrearTexto(botonConfirmar.transform, "Texto", "INICIAR PARTIDA", Vector2.zero, new Vector2(280, 50),
                 16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
-            var botonCancelar = CrearRect(caja.transform, "BotonCancelar", new Vector2(320, 390), new Vector2(280, 50), colorBoton);
+            var botonCancelar = CrearRect(caja.transform, "BotonCancelar", new Vector2(320, 500), new Vector2(280, 50), colorBoton);
             var cancelarBtn = botonCancelar.AddComponent<Button>();
             cancelarBtn.targetGraphic = botonCancelar.GetComponent<Image>();
             cancelarBtn.onClick.AddListener(CerrarOverlayConfigurarPartida);
@@ -1929,6 +1953,57 @@ private void AsegurarCursorVisible()
                 16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
             overlayConfigurarPartida.SetActive(false);
+        }
+
+        // Control "-5 | - | valor | + | +5" centrado en una columna de 310 px que
+        // empieza en 'xColumna'. Devuelve el Text del valor para poder refrescarlo.
+        private Text CrearControlCantidadEspecial(Transform padre, string nombre, float xColumna, float y,
+            UnityEngine.Events.UnityAction menosCinco, UnityEngine.Events.UnityAction menosUno,
+            UnityEngine.Events.UnityAction masUno, UnityEngine.Events.UnityAction masCinco)
+        {
+            CrearFlecha(padre, $"BotonMenos5{nombre}", "-5", new Vector2(xColumna + 30, y), menosCinco);
+            CrearFlecha(padre, $"BotonMenos{nombre}", "-", new Vector2(xColumna + 75, y), menosUno);
+            var texto = CrearTexto(padre, $"Texto{nombre}", "0", new Vector2(xColumna + 120, y - 5), new Vector2(70, 50),
+                22, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            CrearFlecha(padre, $"BotonMas{nombre}", "+", new Vector2(xColumna + 195, y), masUno);
+            CrearFlecha(padre, $"BotonMas5{nombre}", "+5", new Vector2(xColumna + 240, y), masCinco);
+            return texto;
+        }
+
+        // Tope combinado de rocas + hospitales para el tamaño de tablero actual.
+        private int MaximoCasillasEspeciales() =>
+            GridBoard.MaximoCasillasEspeciales(tamanoTablero, tamanoTablero);
+
+        // El tablero puede haber cambiado de tamaño desde la última vez que se abrió
+        // el overlay: se recorta lo elegido para que nunca pase del tope vigente.
+        private void AjustarEspecialesAlMaximo()
+        {
+            int maximo = MaximoCasillasEspeciales();
+            rocasElegidas = Mathf.Clamp(rocasElegidas, 0, maximo);
+            hospitalesElegidos = Mathf.Clamp(hospitalesElegidos, 0, maximo - rocasElegidas);
+        }
+
+        private void CambiarRocas(int delta)
+        {
+            rocasElegidas = Mathf.Clamp(rocasElegidas + delta, 0, MaximoCasillasEspeciales() - hospitalesElegidos);
+            ActualizarTextosEspeciales();
+        }
+
+        private void CambiarHospitales(int delta)
+        {
+            hospitalesElegidos = Mathf.Clamp(hospitalesElegidos + delta, 0, MaximoCasillasEspeciales() - rocasElegidas);
+            ActualizarTextosEspeciales();
+        }
+
+        private void ActualizarTextosEspeciales()
+        {
+            int maximo = MaximoCasillasEspeciales();
+            if (textoRocas != null) textoRocas.text = rocasElegidas.ToString();
+            if (textoHospitales != null) textoHospitales.text = hospitalesElegidos.ToString();
+            if (textoMaximoEspeciales != null)
+                textoMaximoEspeciales.text =
+                    $"Tablero {tamanoTablero} x {tamanoTablero}: rocas + hospitales hasta {maximo} casillas (90%). " +
+                    $"Usadas: {rocasElegidas + hospitalesElegidos}.";
         }
 
         // Tarjeta de bioma: 180x160, con una miniatura (cielo/suelo generados según
@@ -2090,6 +2165,8 @@ private void AsegurarCursorVisible()
         {
             ActualizarBotonesBioma();
             if (textoMisilesPorTanque != null) textoMisilesPorTanque.text = misilesPorTanqueElegido.ToString();
+            AjustarEspecialesAlMaximo();
+            ActualizarTextosEspeciales();
             if (fundidoConfigurarPartida != null) { fundidoConfigurarPartida.interactable = true; fundidoConfigurarPartida.alpha = 0f; }
             overlayConfigurarPartida.SetActive(true);
             IniciarFundidoConfigurarPartida(0f, 1f, true);
@@ -2174,7 +2251,7 @@ private void AsegurarCursorVisible()
             if (corrutinaFundidoConfigurarPartida != null) StopCoroutine(corrutinaFundidoConfigurarPartida);
 
             ConfiguracionPartidaPendiente.Establecer(new List<string>(scriptsPorTanque), new List<TanqueSkinDatos>(skinsPorTanque),
-                tamanoTablero, biomaElegido, misilesPorTanqueElegido);
+                tamanoTablero, biomaElegido, misilesPorTanqueElegido, rocasElegidas, hospitalesElegidos);
 
             var carga = SceneManager.LoadSceneAsync(nombreEscenaJuego);
             carga.allowSceneActivation = false;

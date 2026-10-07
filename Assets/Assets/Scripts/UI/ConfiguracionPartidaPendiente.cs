@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using UnityEngine;
 using TanksGame.Visual;
 
 namespace TanksGame.Core
@@ -33,6 +34,12 @@ namespace TanksGame.Core
         public static BoardView.Bioma Bioma { get; private set; } = BoardView.Bioma.Pradera;
         public static int MisilesPorTanque { get; private set; } = 5;
 
+        // Cantidad de rocas (obstáculos) y de hospitales que se reparten al azar
+        // por el tablero antes de empezar. Por defecto 0 rocas y 1 hospital: lo
+        // más parecido a como funcionaba antes (un solo hospital y ningún obstáculo).
+        public static int Rocas { get; private set; } = 0;
+        public static int Hospitales { get; private set; } = 1;
+
         // Copia de la última partida armada, para el botón "REPETIR" del final
         // de la partida (repetir la MISMA configuración sin volver a pasar por
         // la pantalla de programación). A diferencia de lo anterior, esto NO se
@@ -44,15 +51,19 @@ namespace TanksGame.Core
         public static int UltimoTamanoTablero { get; private set; }
         public static BoardView.Bioma UltimoBioma { get; private set; } = BoardView.Bioma.Pradera;
         public static int UltimoMisilesPorTanque { get; private set; } = 5;
+        public static int UltimasRocas { get; private set; } = 0;
+        public static int UltimosHospitales { get; private set; } = 1;
 
         public static void Establecer(IReadOnlyList<string> scriptsPorTanque, IReadOnlyList<TanqueSkinDatos> skinsPorTanque,
-            int tamanoTablero, BoardView.Bioma bioma, int misilesPorTanque)
+            int tamanoTablero, BoardView.Bioma bioma, int misilesPorTanque, int rocas = 0, int hospitales = 1)
         {
             ScriptsPorTanque = scriptsPorTanque;
             SkinsPorTanque = skinsPorTanque;
             TamanoTablero = tamanoTablero;
             Bioma = bioma;
             MisilesPorTanque = misilesPorTanque;
+            Rocas = Mathf.Max(0, rocas);
+            Hospitales = Mathf.Max(0, hospitales);
             Hay = true;
 
             UltimaScriptsPorTanque = scriptsPorTanque;
@@ -60,6 +71,8 @@ namespace TanksGame.Core
             UltimoTamanoTablero = tamanoTablero;
             UltimoBioma = bioma;
             UltimoMisilesPorTanque = misilesPorTanque;
+            UltimasRocas = Rocas;
+            UltimosHospitales = Hospitales;
             HayUltimaPartida = true;
         }
 
@@ -81,7 +94,8 @@ namespace TanksGame.Core
         public static bool PrepararRepeticion()
         {
             if (!HayUltimaPartida) return false;
-            Establecer(UltimaScriptsPorTanque, UltimaSkinsPorTanque, UltimoTamanoTablero, UltimoBioma, UltimoMisilesPorTanque);
+            Establecer(UltimaScriptsPorTanque, UltimaSkinsPorTanque, UltimoTamanoTablero, UltimoBioma, UltimoMisilesPorTanque,
+                UltimasRocas, UltimosHospitales);
             return true;
         }
     }

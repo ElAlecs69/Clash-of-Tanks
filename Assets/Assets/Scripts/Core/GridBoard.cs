@@ -29,6 +29,14 @@ namespace TanksGame.Core
                     cells[x, y] = new BoardCell();
         }
 
+        // Tope de casillas que pueden ocupar JUNTOS los obstáculos (rocas) y los
+        // hospitales: el 90% del tablero, redondeado hacia ABAJO si ese 90% no
+        // es un entero (ej.: 8x8 = 64 casillas -> 57.6 -> 57). Se calcula con
+        // enteros (casillas * 9 / 10) para evitar errores de redondeo de float
+        // (0.9f * 100 puede dar 89.99999 y floor lo dejaría en 89).
+        public static int MaximoCasillasEspeciales(int ancho, int alto) =>
+            Mathf.Max(0, (ancho * alto * 9) / 10);
+
         public bool IsInside(Vector2Int pos) =>
             pos.x >= 0 && pos.x < Width && pos.y >= 0 && pos.y < Height;
 
@@ -47,18 +55,42 @@ namespace TanksGame.Core
 
         public void SetHospital(Vector2Int pos)
         {
-            if (IsInside(pos)) cells[pos.x, pos.y].Type = CellType.Hospital;
+            if (!IsInside(pos)) return;
+            cells[pos.x, pos.y].Type = CellType.Hospital;
+            cells[pos.x, pos.y].Health = 100f;
         }
 
-        public void PlaceMine(Vector2Int pos)
+        // Vida actual del hospital en 'pos' (0 si ahí no hay un hospital).
+        public float GetHospitalHealth(Vector2Int pos) =>
+            IsHospital(pos) ? cells[pos.x, pos.y].Health : 0f;
+
+        // Daña al hospital en 'pos' y devuelve su vida restante. Si llega a 0 se
+        // destruye: la casilla pasa a ser un obstáculo, igual que la chatarra de
+        // un tanque destruido.
+        public float DamageHospital(Vector2Int pos, float amount)
         {
-            if (!IsInside(pos)) return;
+            if (!IsHospital(pos)) return 0f;
+            var celda = cells[pos.x, pos.y];
+            celda.Health = Mathf.Max(0f, celda.Health - amount);
+            if (celda.Health <= 0f) celda.Type = CellType.Obstacle;
+            return celda.Health;
+        }
+
+        // Devuelve false si no se pudo colocar. No se puede minar un hospital
+        // (la mina lo reemplazaría en la lógica y el hospital desaparecería del
+        // tablero al detonar) ni un obstáculo.
+        public bool PlaceMine(Vector2Int pos)
+        {
+            if (!IsInside(pos)) return false;
+            var tipoActual = cells[pos.x, pos.y].Type;
+            if (tipoActual == CellType.Hospital || tipoActual == CellType.Obstacle) return false;
             cells[pos.x, pos.y].Type = CellType.Mine;
             // Queda "sellada" con el número de la ronda actual: no importa en
             // qué momento de ExecuteRound() se llame a esto (antes o después
             // de AvanzarRonda), la mina solo se arma a partir de la PRÓXIMA
             // vez que rondaActual avance más allá de este número.
             cells[pos.x, pos.y].RondaColocacion = rondaActual;
+            return true;
         }
 
         // Avanza el contador de ronda del tablero. TurnManager la llama UNA

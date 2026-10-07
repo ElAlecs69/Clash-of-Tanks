@@ -29,6 +29,12 @@ namespace TanksGame.Gameplay
         [Min(2)] public int anchoTablero = 8;
         [Min(2)] public int altoTablero = 8;
 
+        [Header("Rocas y hospitales")]
+        [Tooltip("Rocas (obstáculos) repartidas al azar. Rocas + hospitales no pueden pasar del 90% del tablero (redondeado hacia abajo).")]
+        [Min(0)] public int cantidadRocas = 0;
+        [Tooltip("Hospitales repartidos al azar (REPARAR solo funciona sobre uno).")]
+        [Min(0)] public int cantidadHospitales = 1;
+
         [Header("Vista visual del tablero (opcional)")]
         public BoardView vistaTablero;
 
@@ -74,7 +80,6 @@ namespace TanksGame.Gameplay
             AplicarConfiguracionDesdeProgramacionSiCorresponde();
 
             board = new GridBoard(anchoTablero, altoTablero);
-            board.SetHospital(new Vector2Int(0, 0));
 
             agents = new List<TankAgent>();
 
@@ -103,12 +108,18 @@ namespace TanksGame.Gameplay
                 agents.Add(agent);
             }
 
+            // Las rocas y los hospitales se reparten DESPUÉS de sortear a los
+            // tanques, solo sobre casillas que no estén ocupadas por uno: así
+            // ningún tanque puede quedar enterrado dentro de una roca.
+            GenerarRocasYHospitales(out var posicionesRocas, out var posicionesHospitales);
+
             turnManager = new TurnManager(board, agents);
 
             if (vistaTablero != null)
             {
                 if (biomaPendiente.HasValue) vistaTablero.SetBioma(biomaPendiente.Value);
                 vistaTablero.Construir(board.Width, board.Height);
+                vistaTablero.ColocarRocasYHospitales(posicionesRocas, posicionesHospitales);
                 RefrescarVista();
             }
         }
@@ -145,7 +156,67 @@ namespace TanksGame.Gameplay
 
             biomaPendiente = ConfiguracionPartidaPendiente.Bioma;
 
+            cantidadRocas = ConfiguracionPartidaPendiente.Rocas;
+            cantidadHospitales = ConfiguracionPartidaPendiente.Hospitales;
+
             ConfiguracionPartidaPendiente.Limpiar();
+        }
+
+        // Sortea al azar dónde van las rocas y los hospitales entre las casillas
+        // que NO tienen un tanque encima, y los registra en el tablero lógico
+        // (las rocas como obstáculos, que bloquean movimiento y disparos).
+        //
+        // Reglas de cantidad:
+        //  1) Rocas + hospitales <= 90% del tablero (GridBoard.MaximoCasillasEspeciales,
+        //     redondeado hacia abajo). Si se pasa, se recortan primero las rocas.
+        //  2) Además tiene que sobrar casilla para cada tanque: con un 90% de
+        //     ocupación en un tablero chico puede haber MÁS tanques que casillas
+        //     libres, así que si hace falta se recortan las rocas (y, en último
+        //     caso, los hospitales) para que todos los tanques tengan su lugar.
+        private void GenerarRocasYHospitales(out List<Vector2Int> rocas, out List<Vector2Int> hospitales)
+        {
+            rocas = new List<Vector2Int>();
+            hospitales = new List<Vector2Int>();
+
+            int pedidasRocas = Mathf.Max(0, cantidadRocas);
+            int pedidosHospitales = Mathf.Max(0, cantidadHospitales);
+            if (pedidasRocas == 0 && pedidosHospitales == 0) return;
+
+            var ocupadas = new HashSet<Vector2Int>(agents.Select(a => a.Tank.Position));
+            var libres = new List<Vector2Int>();
+            for (int x = 0; x < board.Width; x++)
+                for (int y = 0; y < board.Height; y++)
+                {
+                    var celda = new Vector2Int(x, y);
+                    if (!ocupadas.Contains(celda)) libres.Add(celda);
+                }
+
+            // Fisher-Yates, igual que en CalcularPosicionesIniciales.
+            for (int i = libres.Count - 1; i > 0; i--)
+            {
+                int j = Random.Range(0, i + 1);
+                (libres[i], libres[j]) = (libres[j], libres[i]);
+            }
+
+            int tope = Mathf.Min(GridBoard.MaximoCasillasEspeciales(board.Width, board.Height), libres.Count);
+            int totalHospitales = Mathf.Min(pedidosHospitales, tope);
+            int totalRocas = Mathf.Min(pedidasRocas, tope - totalHospitales);
+
+            if (totalRocas < pedidasRocas || totalHospitales < pedidosHospitales)
+                Debug.LogWarning($"Se pidieron {pedidasRocas} rocas y {pedidosHospitales} hospitales, pero el tope del tablero es {tope}: " +
+                                 $"se colocan {totalRocas} rocas y {totalHospitales} hospitales.");
+
+            int indice = 0;
+            for (int i = 0; i < totalHospitales; i++, indice++)
+            {
+                board.SetHospital(libres[indice]);
+                hospitales.Add(libres[indice]);
+            }
+            for (int i = 0; i < totalRocas; i++, indice++)
+            {
+                board.SetObstacle(libres[indice]);
+                rocas.Add(libres[indice]);
+            }
         }
 
         // Reparte las posiciones iniciales sorteando, para cada tanque, una
@@ -226,7 +297,13 @@ namespace TanksGame.Gameplay
                 turnManager.LastRoundShots.Where(s => s.Impacto).Select(s => s.TargetId));
             var golpeadosPorOtrosEventos = new HashSet<int>(
                 turnManager.LastRoundDamageEvents.SelectMany(e => e.TargetIds));
-            var todosLosGolpeados = new HashSet<int>(golpeadosPorDisparo.Concat(golpeadosPorOtrosEventos));
+            // Tanques alcanzados por la onda expansiva de un MISIL que no impactó
+            // a nadie: igual que el resto, su daño se muestra recién cuando la
+            // explosión se reproduce en pantalla.
+            var golpeadosPorArea = new HashSet<int>(
+                turnManager.LastRoundShots.SelectMany(sh => sh.AreaObjetivos.Select(a => a.TargetId)));
+            var todosLosGolpeados = new HashSet<int>(
+                golpeadosPorDisparo.Concat(golpeadosPorOtrosEventos).Concat(golpeadosPorArea));
 
             // Vida, aparición y muerte se actualizan ya mismo para todos los
             // tanques EXCEPTO los golpeados esta ronda (esos muestran su

@@ -22,5 +22,10 @@ namespace TanksGame.Core
         // sola en cuanto arranca una ronda POSTERIOR a la que la colocó, sin
         // importar en qué momento exacto de ExecuteRound() se la consulte.
         public int RondaColocacion = -1;
+
+        // Vida (0-100) de un hospital. Los hospitales reciben daño y se destruyen
+        // con las mismas reglas que los tanques; al llegar a 0 la casilla pasa a
+        // ser un obstáculo (escombros). Solo se usa cuando Type == Hospital.
+        public float Health = 100f;
     }
 }
