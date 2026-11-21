@@ -156,7 +156,7 @@ namespace TanksGame.UI
                 return;
             }
 
-            if (FindObjectOfType<AudioListener>() == null)
+            if (FindAnyObjectByType<AudioListener>() == null)
             {
                 gameObject.AddComponent<AudioListener>();
             }
@@ -321,7 +321,7 @@ namespace TanksGame.UI
 
         private void ConstruirUI()
         {
-            if (FindObjectOfType<EventSystem>() == null)
+            if (FindAnyObjectByType<EventSystem>() == null)
             {
                 var eventSystemGo = new GameObject("EventSystem");
                 eventSystemGo.AddComponent<EventSystem>();

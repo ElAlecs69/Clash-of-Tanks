@@ -10,11 +10,11 @@ namespace TanksGame.Language
     public enum ComparisonOp { GreaterThan, LessThan, GreaterOrEqual, LessOrEqual, Equal }
 
     // Representa condiciones como:
-    //   IF VIDA < 40
-    //   IF RADAR(N) > 0
-    //   IF MISILES > 0
+    //   IF (VIDA < 40) THEN (REPARAR)
+    //   IF (RADAR(N) > 0) THEN (MISIL(N))
+    //   IF (MISILES > 0) THEN (AMT(E))
     // ...o varias condiciones simples unidas con Y/AND, como:
-    //   IF (RADAR(N) < 0 Y RADAR(O) < 0) { ... }
+    //   IF (RADAR(N) < 0 Y RADAR(O) < 0) THEN (MOV(S))
     // En ese caso 'Sub' trae cada condición simple y se exige que TODAS se
     // cumplan (AND); Operand/RadarDirection/Op/Value de esta instancia se
     // ignoran cuando 'Sub' no es null.

@@ -40,6 +40,12 @@ namespace TanksGame.Core
         public static int Rocas { get; private set; } = 0;
         public static int Hospitales { get; private set; } = 1;
 
+        // Reglas elegidas en "Configurar partida": turnos de activación de las
+        // minas, duración del escudo, daño de AMT (MISIL y MINA salen de él) y
+        // curación de los hospitales. Los valores por defecto son los de
+        // ReglasPartida.
+        public static ReglasPartida Reglas { get; private set; } = new ReglasPartida();
+
         // Copia de la última partida armada, para el botón "REPETIR" del final
         // de la partida (repetir la MISMA configuración sin volver a pasar por
         // la pantalla de programación). A diferencia de lo anterior, esto NO se
@@ -53,9 +59,11 @@ namespace TanksGame.Core
         public static int UltimoMisilesPorTanque { get; private set; } = 5;
         public static int UltimasRocas { get; private set; } = 0;
         public static int UltimosHospitales { get; private set; } = 1;
+        public static ReglasPartida UltimasReglas { get; private set; } = new ReglasPartida();
 
         public static void Establecer(IReadOnlyList<string> scriptsPorTanque, IReadOnlyList<TanqueSkinDatos> skinsPorTanque,
-            int tamanoTablero, BoardView.Bioma bioma, int misilesPorTanque, int rocas = 0, int hospitales = 1)
+            int tamanoTablero, BoardView.Bioma bioma, int misilesPorTanque, int rocas = 0, int hospitales = 1,
+            ReglasPartida reglas = null)
         {
             ScriptsPorTanque = scriptsPorTanque;
             SkinsPorTanque = skinsPorTanque;
@@ -64,6 +72,7 @@ namespace TanksGame.Core
             MisilesPorTanque = misilesPorTanque;
             Rocas = Mathf.Max(0, rocas);
             Hospitales = Mathf.Max(0, hospitales);
+            Reglas = (reglas ?? new ReglasPartida()).Copia();
             Hay = true;
 
             UltimaScriptsPorTanque = scriptsPorTanque;
@@ -73,6 +82,7 @@ namespace TanksGame.Core
             UltimoMisilesPorTanque = misilesPorTanque;
             UltimasRocas = Rocas;
             UltimosHospitales = Hospitales;
+            UltimasReglas = Reglas.Copia();
             HayUltimaPartida = true;
         }
 
@@ -95,7 +105,7 @@ namespace TanksGame.Core
         {
             if (!HayUltimaPartida) return false;
             Establecer(UltimaScriptsPorTanque, UltimaSkinsPorTanque, UltimoTamanoTablero, UltimoBioma, UltimoMisilesPorTanque,
-                UltimasRocas, UltimosHospitales);
+                UltimasRocas, UltimosHospitales, UltimasReglas);
             return true;
         }
     }

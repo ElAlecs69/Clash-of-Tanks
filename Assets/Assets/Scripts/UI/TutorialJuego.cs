@@ -73,9 +73,8 @@ namespace TanksGame.UI
 
         private const string EjemploCodigo =
             "<color=#777777># Si hay un tanque al norte, dispara</color>\n" +
-            "<color=#4FC3F7>IF</color> (<color=#4FC3F7>RADAR</color>(<color=#FFB74D>N</color>)>0) {\n" +
-            "    <color=#4FC3F7>MISIL</color>(<color=#FFB74D>N</color>)\n" +
-            "}\n" +
+            "<color=#4FC3F7>IF</color> (<color=#4FC3F7>RADAR</color>(<color=#FFB74D>N</color>)>0) " +
+            "<color=#4FC3F7>THEN</color> (<color=#4FC3F7>MISIL</color>(<color=#FFB74D>N</color>))\n" +
             "<color=#4FC3F7>MOV</color>(<color=#FFB74D>E</color>)";
 
         private static string Entrada(string nombre, string descripcion)
@@ -84,15 +83,16 @@ namespace TanksGame.UI
         }
 
         private static readonly string InstruccionesColumnaA =
-            Entrada("MOV(dir)", "Avanza una casilla. Si chocas con un obstáculo (roca, chatarra) pierdes 6%; si chocas con otro tanque, ambos pierden 8%. Si pisas un hospital, recuperas 10% de vida.") + "\n\n" +
-            Entrada("AMT(dir)", "Ráfaga de ametralladora: daña (-12%) al primer tanque u hospital de esa línea. No gasta munición.") + "\n\n" +
-            Entrada("MISIL(dir)", "También daña (-25%) al primer tanque u hospital de la línea, pero gasta 1 de tus misiles. Los obstáculos lo bloquean. Si no impacta a nadie, explota y daña a los tanques vecinos: -10% en las 4 casillas conexas y -8% en las diagonales.") + "\n\n" +
-            Entrada("MINA", "Deja una mina en tu casilla. Se arma en la ronda siguiente y daña (-20%) al tanque que termine encima.") + "\n\n" +
-            Entrada("ESCUDO", "Te protege de todo daño durante esa ronda.");
+            Entrada("MOV(dir)", "Avanza una casilla. Si chocas con un obstáculo (roca, chatarra) pierdes 6%; si chocas con otro tanque, ambos pierden 8%. Si pisas un hospital, recuperas vida (10% por defecto, configurable).") + "\n\n" +
+            Entrada("AMT(dir)", "Ráfaga de ametralladora: daña (por defecto -12%, configurable de 5 a 20) al primer tanque u hospital de esa línea. No gasta munición.") + "\n\n" +
+            Entrada("MISIL(dir)", "También daña el doble que AMT (-24% por defecto) al primer tanque u hospital de la línea, pero gasta 1 de tus misiles. Los obstáculos lo bloquean. Si no impacta a nadie, explota y daña a los tanques vecinos: -10% en las 4 casillas conexas y -8% en las diagonales.") + "\n\n" +
+            Entrada("MINA( ) / MINA(dir)", "MINA() deja una mina en tu casilla; MINA(dir) la deja en la casilla vecina en esa dirección (N, S, E, O o las diagonales NO, NE, SE, SO). Se arma tras los turnos que elijas al configurar la partida (1 por defecto) y daña 1.5 veces lo que AMT (-18% por defecto) al tanque que termine encima.") + "\n\n" +
+            Entrada("ESCUDO", "Te protege de todo daño durante los turnos que elijas al configurar la partida (1 por defecto, contando el turno en que lo activas).");
 
         private static readonly string InstruccionesColumnaB =
             Entrada("RADAR(dir)  <  >  =", "Mide hasta el primer tanque en esa dirección: distancia positiva si hay uno, negativa si no. Ej.: RADAR(N)>0") + "\n\n" +
-            Entrada("IF ( ) { }", "Ejecuta UNA instrucción solo si se cumple la condición (VIDA, MISILES o RADAR). Une varias con Y.") + "\n\n" +
+            Entrada("IF ( ) THEN ( )", "Ejecuta UNA instrucción solo si se cumple la condición (VIDA, MISILES o RADAR). Une varias con Y. Ej.: IF (VIDA<40) THEN (REPARAR)") + "\n\n" +
+            Entrada("REPARAR", "Estando sobre un hospital, recupera vida (20% por defecto). Cada tanque tiene un número limitado de reparaciones (3 por defecto); ambos valores se eligen al configurar la partida.") + "\n\n" +
             Entrada("ESPERAR", "No hace nada en este turno.") + "\n\n" +
             Entrada("BUCLE", "Tu script se repite solo cuando llega al final.");
 

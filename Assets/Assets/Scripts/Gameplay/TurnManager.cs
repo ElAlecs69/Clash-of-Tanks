@@ -116,11 +116,20 @@ namespace TanksGame.Gameplay
         // Choque al intentar avanzar contra un obstáculo (roca, montaña o chatarra
         // de un tanque destruido).
         public float DanioChoqueObstaculo = 6f;
-        // Disparos directos (a un tanque o a un hospital).
-        public float DanioAmt = 12f;
-        public float DanioMisil = 25f;
+        // Disparos directos (a un tanque o a un hospital) y minas. Se configuran
+        // antes de empezar la partida (ver AplicarReglas / ReglasPartida):
+        //   AMT   = configurable (5-20, por defecto 12)
+        //   MISIL = AMT * 2
+        //   MINA  = AMT * 1.5
+        public float DanioAmt = ReglasPartida.DanioAmtDefecto;
+        public float DanioMisil = ReglasPartida.DanioAmtDefecto * ReglasPartida.FactorMisil;
+        public float DanioMina = ReglasPartida.DanioAmtDefecto * ReglasPartida.FactorMina;
         // Vida que recupera un tanque al pisar (llegar a) un hospital.
-        public float CuracionPorHospital = 10f;
+        public float CuracionPorHospital = ReglasPartida.CuracionHospitalDefecto;
+        // Vida que recupera cada REPARAR (sobre un hospital).
+        public float CuracionPorReparar = ReglasPartida.CuracionRepararDefecto;
+        // Turnos que dura el ESCUDO una vez activado (contando el turno de activación).
+        public int TurnosEscudo = ReglasPartida.TurnosEscudoDefecto;
         // Choque entre dos tanques (lo recibe CADA uno de los dos).
         public float DanioChoqueTanque = 8f;
         // Daño de área de un MISIL que no impacta a ningún tanque: se aplica a
@@ -149,6 +158,22 @@ namespace TanksGame.Gameplay
             Agents = agents;
         }
 
+        // Aplica las reglas elegidas en "Configurar partida": daños, curación de
+        // hospitales, duración del escudo y turnos de activación de las minas.
+        public void AplicarReglas(ReglasPartida reglas)
+        {
+            if (reglas == null) return;
+            DanioAmt = reglas.DanioAmt;
+            DanioMisil = reglas.DanioMisil;
+            DanioMina = reglas.DanioMina;
+            CuracionPorHospital = reglas.curacionHospital;
+            CuracionPorReparar = reglas.curacionReparar;
+            foreach (var agent in Agents)
+                agent.Tank.RepairsLeft = reglas.reparaciones;
+            TurnosEscudo = Mathf.Max(1, reglas.turnosEscudo);
+            Board.TurnosActivacionMina = Mathf.Max(1, reglas.turnosActivacionMina);
+        }
+
         public GameResult ExecuteRound()
         {
             LastRoundLog.Clear();
@@ -158,9 +183,11 @@ namespace TanksGame.Gameplay
             llegadasAHospital.Clear();
             bool huboDanio = false;
 
-            // El escudo protege solo durante el turno en que se activa (sección 13).
+            // El escudo dura TurnosEscudo turnos, contando el turno en que se activa
+            // (sección 13): al empezar cada ronda se le descuenta uno y se apaga al
+            // llegar a 0. Con TurnosEscudo = 1 protege solo la ronda de activación.
             foreach (var agent in Agents)
-                agent.Tank.ShieldActive = false;
+                agent.Tank.TickShield();
 
             // Avanza el contador de ronda del tablero. Ya NO depende de que
             // esto se llame antes de procesar las instrucciones (ver el
@@ -328,12 +355,18 @@ namespace TanksGame.Gameplay
                     break;
                 }
                 case InstructionType.Mina:
-                    if (Board.PlaceMine(tank.Position))
-                        LastRoundLog.Add($"Jugador {tank.PlayerId}: coloca una mina en {tank.Position}.");
+                {
+                    // MINA() mina la casilla propia; MINA(dir) mina UNA casilla vecina
+                    // (N, S, E, O, NO, NE, SE o SO). Si la casilla queda fuera del
+                    // tablero, tiene hospital u obstáculo, no se puede minar ahí.
+                    var celdaMina = tank.Position + instruction.MinaDir.ToOffset();
+                    if (!Board.PlaceMine(celdaMina))
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: {instruction} inválida, no se puede colocar la mina en {celdaMina}.");
                     else
-                        LastRoundLog.Add($"Jugador {tank.PlayerId}: MINA inválida, no se puede minar un hospital.");
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: coloca una mina en {celdaMina}.");
                     RegistrarTurnoNoAtascado(agent);
                     break;
+                }
 
                 case InstructionType.Misil:
                 {
@@ -408,8 +441,8 @@ namespace TanksGame.Gameplay
                     break;
                 }
                 case InstructionType.Escudo:
-                    tank.ShieldActive = true;
-                    LastRoundLog.Add($"Jugador {tank.PlayerId}: activa ESCUDO.");
+                    tank.ActivateShield(TurnosEscudo);
+                    LastRoundLog.Add($"Jugador {tank.PlayerId}: activa ESCUDO ({TurnosEscudo} turno(s)).");
                     RegistrarTurnoNoAtascado(agent);
                     break;
 
@@ -419,19 +452,42 @@ namespace TanksGame.Gameplay
                     break;
 
                 case InstructionType.Reparar:
-                    if (Board.IsHospital(tank.Position))
+                    if (!Board.IsHospital(tank.Position))
                     {
-                        tank.Heal(20f);
-                        LastRoundLog.Add($"Jugador {tank.PlayerId}: repara, ahora tiene {tank.Health}% de vida.");
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: REPARAR inválido, no está en el Hospital.");
+                    }
+                    else if (tank.RepairsLeft <= 0)
+                    {
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: REPARAR inválido, no le quedan reparaciones.");
                     }
                     else
                     {
-                        LastRoundLog.Add($"Jugador {tank.PlayerId}: REPARAR inválido, no está en el Hospital.");
+                        tank.RepairsLeft--;
+                        tank.Heal(CuracionPorReparar);
+                        LastRoundLog.Add($"Jugador {tank.PlayerId}: repara (+{CuracionPorReparar}%), vida {tank.Health}%, le quedan {tank.RepairsLeft} reparación(es).");
+                        LastRoundDamageEvents.Add(new DamageEvent
+                        {
+                            Tipo = DamageEventType.Curacion,
+                            Celda = tank.Position,
+                            TargetIds = { tank.PlayerId },
+                            VidaPorcentajeDespuesPorId = { [tank.PlayerId] = Mathf.RoundToInt(tank.Health) },
+                            DestruidosIds = new HashSet<int>()
+                        });
                     }
                     RegistrarTurnoNoAtascado(agent);
                     break;
             }
         }
+
+        private static readonly Vector2Int[] OffsetsConexas =
+        {
+            new Vector2Int(0, 1), new Vector2Int(0, -1), new Vector2Int(1, 0), new Vector2Int(-1, 0)
+        };
+
+        private static readonly Vector2Int[] OffsetsDiagonales =
+        {
+            new Vector2Int(-1, 1), new Vector2Int(1, 1), new Vector2Int(1, -1), new Vector2Int(-1, -1)
+        };
 
         // Daña a un hospital con las mismas reglas que a un tanque: pierde vida y,
         // al llegar a 0, se destruye y su casilla pasa a ser un obstáculo.
@@ -597,8 +653,8 @@ namespace TanksGame.Gameplay
                 // un MOV hacia ella, solo quedándose quieto encima.
                 if (Board.TryConsumeMine(tank.Position))
                 {
-                    if (AplicarDanio(tank, 20f)) huboDanio = true;
-                    LastRoundLog.Add($"Jugador {tank.PlayerId}: pisa una mina (-20%).");
+                    if (AplicarDanio(tank, DanioMina)) huboDanio = true;
+                    LastRoundLog.Add($"Jugador {tank.PlayerId}: pisa una mina (-{DanioMina}%).");
                     HandleIfDestroyed(tank);
 
                     LastRoundDamageEvents.Add(new DamageEvent

@@ -420,24 +420,16 @@ MonoBehaviour:
   configuracionTanques:
   - nombre: Jugador 1
     misilesIniciales: 5
-    programa: 'IF RADAR(E) > 0
+    programa: 'IF (RADAR(E) > 0) THEN (MISIL(E))
 
-      MISIL
-
-      IF RADAR(E) < 0
-
-      MOV(E)
+      IF (RADAR(E) < 0) THEN (MOV(E))
 
       ESPERAR'
   - nombre: Jugador 2
     misilesIniciales: 5
-    programa: 'IF VIDA < 40
+    programa: 'IF (VIDA < 40) THEN (REPARAR)
 
-      REPARAR
-
-      IF RADAR(O) > 0
-
-      AMT(O)
+      IF (RADAR(O) > 0) THEN (AMT(O))
 
       MOV(O)'
 --- !u!4 &827893375

@@ -227,7 +227,7 @@ namespace TanksGame.Visual
             if (clip == null) return;
             if (audioSourceEfectos == null)
             {
-                if (FindObjectOfType<AudioListener>() == null)
+                if (FindAnyObjectByType<AudioListener>() == null)
                     gameObject.AddComponent<AudioListener>();
                 audioSourceEfectos = gameObject.AddComponent<AudioSource>();
                 audioSourceEfectos.playOnAwake = false;

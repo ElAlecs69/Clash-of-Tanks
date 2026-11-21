@@ -35,6 +35,10 @@ namespace TanksGame.Gameplay
         [Tooltip("Hospitales repartidos al azar (REPARAR solo funciona sobre uno).")]
         [Min(0)] public int cantidadHospitales = 1;
 
+        [Header("Reglas de la partida")]
+        [Tooltip("Daños, curación de hospitales, duración del escudo y turnos de activación de minas. Si la partida viene de la pantalla de Configurar partida, se usan los valores elegidos ahí.")]
+        public ReglasPartida reglas = new ReglasPartida();
+
         [Header("Vista visual del tablero (opcional)")]
         public BoardView vistaTablero;
 
@@ -48,12 +52,12 @@ namespace TanksGame.Gameplay
             new ConfiguracionTanque
             {
                 nombre = "Jugador 1",
-                programa = "IF RADAR(E) > 0\nMISIL\nIF RADAR(E) < 0\nMOV(E)\nESPERAR"
+                programa = "IF (RADAR(E) > 0) THEN (MISIL(E))\nIF (RADAR(E) < 0) THEN (MOV(E))\nESPERAR"
             },
             new ConfiguracionTanque
             {
                 nombre = "Jugador 2",
-                programa = "IF VIDA < 40\nREPARAR\nIF RADAR(O) > 0\nAMT(O)\nMOV(O)"
+                programa = "IF (VIDA < 40) THEN (REPARAR)\nIF (RADAR(O) > 0) THEN (AMT(O))\nMOV(O)"
             }
         };
 
@@ -114,6 +118,7 @@ namespace TanksGame.Gameplay
             GenerarRocasYHospitales(out var posicionesRocas, out var posicionesHospitales);
 
             turnManager = new TurnManager(board, agents);
+            turnManager.AplicarReglas(reglas);
 
             if (vistaTablero != null)
             {
@@ -158,6 +163,8 @@ namespace TanksGame.Gameplay
 
             cantidadRocas = ConfiguracionPartidaPendiente.Rocas;
             cantidadHospitales = ConfiguracionPartidaPendiente.Hospitales;
+
+            reglas = ConfiguracionPartidaPendiente.Reglas.Copia();
 
             ConfiguracionPartidaPendiente.Limpiar();
         }

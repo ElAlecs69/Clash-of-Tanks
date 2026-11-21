@@ -128,7 +128,7 @@ namespace TanksGame.UI
         {
             // Si la escena no tiene ninguna Cámara (y por lo tanto ningún AudioListener),
             // los sonidos no se reproducen. Nos aseguramos de que exista al menos uno.
-            if (FindObjectOfType<AudioListener>() == null)
+            if (FindAnyObjectByType<AudioListener>() == null)
             {
                 gameObject.AddComponent<AudioListener>();
             }
@@ -201,7 +201,7 @@ namespace TanksGame.UI
 
         private void ConstruirUI()
         {
-            if (FindObjectOfType<EventSystem>() == null)
+            if (FindAnyObjectByType<EventSystem>() == null)
             {
                 var eventSystemGo = new GameObject("EventSystem");
                 eventSystemGo.AddComponent<EventSystem>();

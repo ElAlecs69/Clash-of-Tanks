@@ -102,7 +102,7 @@ namespace TanksGame.UI
             if (camara == null)
             {
                 camara = Camera.main;
-                if (camara == null) camara = FindObjectOfType<Camera>();
+                if (camara == null) camara = FindAnyObjectByType<Camera>();
                 if (camara == null) return;
             }
 

@@ -18,6 +18,14 @@ namespace TanksGame.Core
         // cuando rondaActual sea MAYOR que la ronda en la que se colocó.
         private int rondaActual = 0;
 
+        // Turnos que tarda una mina en activarse tras colocarse (configurable al
+        // empezar la partida). Con 1, queda armada en la ronda siguiente.
+        public int TurnosActivacionMina = 1;
+
+        private bool EstaArmada(BoardCell celda) =>
+            celda.Type == CellType.Mine
+            && rondaActual >= celda.RondaColocacion + Mathf.Max(1, TurnosActivacionMina);
+
         public GridBoard(int width = 8, int height = 8)
         {
             Width = width;
@@ -84,6 +92,8 @@ namespace TanksGame.Core
             if (!IsInside(pos)) return false;
             var tipoActual = cells[pos.x, pos.y].Type;
             if (tipoActual == CellType.Hospital || tipoActual == CellType.Obstacle) return false;
+            // Si ya hay una mina ahi, se conserva (y con ella su cuenta de activacion).
+            if (tipoActual == CellType.Mine) return true;
             cells[pos.x, pos.y].Type = CellType.Mine;
             // Queda "sellada" con el número de la ronda actual: no importa en
             // qué momento de ExecuteRound() se llame a esto (antes o después
@@ -104,8 +114,7 @@ namespace TanksGame.Core
         public void AvanzarRonda() => rondaActual++;
 
         public bool IsMineArmed(Vector2Int pos) =>
-            IsInside(pos) && cells[pos.x, pos.y].Type == CellType.Mine
-            && rondaActual > cells[pos.x, pos.y].RondaColocacion;
+            IsInside(pos) && EstaArmada(cells[pos.x, pos.y]);
 
         // Si hay una mina ARMADA en 'pos', la retira y devuelve true (para
         // aplicar daño). Una mina desarmada (recién colocada esta misma
@@ -113,8 +122,7 @@ namespace TanksGame.Core
         public bool TryConsumeMine(Vector2Int pos)
         {
             if (!IsInside(pos)) return false;
-            if (cells[pos.x, pos.y].Type == CellType.Mine
-                && rondaActual > cells[pos.x, pos.y].RondaColocacion)
+            if (EstaArmada(cells[pos.x, pos.y]))
             {
                 cells[pos.x, pos.y].Type = CellType.Free;
                 cells[pos.x, pos.y].RondaColocacion = -1;

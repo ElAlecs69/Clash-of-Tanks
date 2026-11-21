@@ -89,7 +89,21 @@ namespace TanksGame.UI
 
         [Header("Rosa de los vientos (dirección)")]
         [Tooltip("Nombres de instrucciones que requieren una dirección como argumento, ej. \"MOV\" para MOV(). Se detecta cuando aparecen escritas con paréntesis vacíos: MOV()")]
-        public string[] comandosQueRequierenDireccion = { "MOV", "AMT", "RADAR", "MISIL" };
+        public string[] comandosQueRequierenDireccion = { "MOV", "AMT", "RADAR", "MISIL", "MINA" };
+
+        // Unity guarda en la escena el valor serializado del campo de arriba, así que una
+        // escena creada antes de agregar "MINA" conserva la lista vieja. Esta propiedad
+        // garantiza que MINA siempre use la rosa de dirección.
+        private string[] ComandosConDireccion
+        {
+            get
+            {
+                var lista = comandosQueRequierenDireccion ?? Array.Empty<string>();
+                return lista.Any(c => string.Equals(c, "MINA", StringComparison.OrdinalIgnoreCase))
+                    ? lista
+                    : lista.Concat(new[] { "MINA" }).ToArray();
+            }
+        }
 
         [Header("Música de fondo (solo esta pantalla)")]
         [Tooltip("Se reproduce en bucle mientras estás en esta pantalla. Se detiene sola al volver al menú (no usa DontDestroyOnLoad).")]
@@ -161,6 +175,19 @@ namespace TanksGame.UI
         private const int MISILES_MINIMO = 1;
         private const int MISILES_MAXIMO = 20;
         private Text textoMisilesPorTanque;
+
+        // Reglas elegidas en el overlay (turnos de activación de minas, duración del
+        // escudo, daño de AMT -- MISIL y MINA se derivan de él -- y curación de los
+        // hospitales). Arrancan con los valores por defecto de ReglasPartida y se
+        // recuerdan mientras dure esta pantalla.
+        private readonly ReglasPartida reglasElegidas = new ReglasPartida();
+        private Text textoTurnosMina;
+        private Text textoTurnosEscudo;
+        private Text textoDanioAmt;
+        private Text textoCuracionHospital;
+        private Text textoReparaciones;
+        private Text textoCuracionReparar;
+        private Text textoDaniosDerivados;
 
         // Rocas (obstáculos) y hospitales que se reparten al azar por el tablero.
         // Entre las dos cosas no pueden pasar del 90% de las casillas (redondeado
@@ -251,8 +278,8 @@ namespace TanksGame.UI
 
         private static readonly string[] PalabrasClave =
         {
-            "INICIO", "IF", "FIN", "MOV", "AMT", "MINA", "MISIL", "RADAR",
-            "ESCUDO", "ESPERAR", /*"DAÑAR", "DAÑO",*/ "BUCLE"
+            "INICIO", "IF", "THEN", "FIN", "MOV", "AMT", "MINA", "MISIL", "RADAR",
+            "ESCUDO", "REPARAR", "ESPERAR", /*"DAÑAR", "DAÑO",*/ "BUCLE"
         };
 
         private static readonly Color[] ColoresPrincipales =
@@ -444,6 +471,21 @@ namespace TanksGame.UI
                 caretAnteriorEditor = caretActual;
                 anclaAnteriorEditor = campoEditor.selectionAnchorPosition;
                 focoAnteriorEditor = campoEditor.selectionFocusPosition;
+            }
+
+            // Refresca la detección de la instrucción pendiente (y con ella la rosa de
+            // dirección, p. ej. las diagonales de MINA) cuando cambia el cursor o el texto,
+            // no solo cuando cambia el texto.
+            if (campoEditor != null && textoInstruccionPendienteDireccion != null)
+            {
+                int cursorDeteccion = ObtenerCursorActual();
+                string textoDeteccion = campoEditor.text;
+                if (cursorDeteccion != ultimoCursorDeteccion || textoDeteccion != ultimoTextoDeteccion)
+                {
+                    ultimoCursorDeteccion = cursorDeteccion;
+                    ultimoTextoDeteccion = textoDeteccion;
+                    ActualizarDeteccionDireccion();
+                }
             }
 
             if (rotarTanquePreview && tanquePreviewInstancia != null)
@@ -742,15 +784,18 @@ namespace TanksGame.UI
             {
                 ("MOV (dir)", "MOV()"),
                 ("AMT (dir)", "AMT()"),
-                ("MINA", "MINA"),
+                // MINA: sin dirección = en tu casilla; con dirección (rosa: N, S, E, O,
+                // NO, NE, SE, SO) = en la casilla vecina en esa dirección.
+                ("MINA (dir)", "MINA()"),
                 ("MISIL (dir)", "MISIL()"),
                 // RADAR viene en 3 variantes con la comparación ya incluida: el jugador
                 // solo elige la dirección y escribe el número (ej. RADAR(N)<0).
                 ("RADAR (dir) <", "RADAR()<"),
                 ("RADAR (dir) >", "RADAR()>"),
                 ("RADAR (dir) =", "RADAR()="),
-                ("IF ( ) { }", "IF ( ) {\n    \n}"),
+                ("IF ( ) THEN ( )", "IF ( ) THEN ( )"),
                 ("ESCUDO", "ESCUDO"),
+                ("REPARAR", "REPARAR"),
                 ("ESPERAR", "ESPERAR"),
                 //("DAÑAR", "DAÑAR"),
                 //("DAÑO", "DAÑO"),
@@ -1203,7 +1248,8 @@ private void AsegurarCursorVisible()
             string comentario = indiceComentario >= 0 ? linea.Substring(indiceComentario) : "";
 
             codigo = Regex.Replace(codigo, PatronPalabrasClave, "<color=#4FC3F7>$1</color>");
-            codigo = Regex.Replace(codigo, @"\(([NSEO])\)", "(<color=#FFB74D>$1</color>)");
+            // Dirección entre paréntesis: N, S, E, O y (solo MINA) NO, NE, SE, SO.
+            codigo = Regex.Replace(codigo, @"\((NO|NE|SE|SO|[NSEO])\)", "(<color=#FFB74D>$1</color>)");
             codigo = Regex.Replace(codigo, @"\b(\d+)\b", "<color=#C3E88D>$1</color>");
 
             if (comentario.Length > 0)
@@ -1216,16 +1262,14 @@ private void AsegurarCursorVisible()
         {
             get
             {
-                var comandos = comandosQueRequierenDireccion == null
-                    ? Array.Empty<string>()
-                    : comandosQueRequierenDireccion
+                var comandos = ComandosConDireccion
                         .Where(c => !string.IsNullOrWhiteSpace(c))
                         .Select(Regex.Escape)
                         .ToArray();
 
                 return comandos.Length == 0
                     ? @"(?!x)x"
-                    : @"(?<!\w)(" + string.Join("|", comandos) + @")\([NSEO]?\)$";
+                    : @"(?<!\w)(" + string.Join("|", comandos) + @")\((?:NO|NE|SE|SO|[NSEO])?\)$";
             }
         }
 
@@ -1863,7 +1907,8 @@ private void AsegurarCursorVisible()
         }
 
         // ------------------------------------------------------------------
-        // OVERLAY "CONFIGURAR PARTIDA" (bioma + misiles) — se abre al tocar
+        // OVERLAY "CONFIGURAR PARTIDA" (bioma, misiles, rocas/hospitales y reglas:
+        // turnos de minas y escudo, daño de AMT, curación) — se abre al tocar
         // INICIAR PARTIDA, después de validar que haya suficientes tanques
         // programados, y antes de cargar la escena de juego.
         // ------------------------------------------------------------------
@@ -1885,7 +1930,7 @@ private void AsegurarCursorVisible()
             // CanvasGroup para el fundido de entrada/salida (alfa 0 -> 1).
             fundidoConfigurarPartida = overlayConfigurarPartida.AddComponent<CanvasGroup>();
             fundidoConfigurarPartida.alpha = 0f;
-            var caja = CrearRect(overlayConfigurarPartida.transform, "Caja", Vector2.zero, new Vector2(620, 570), colorPanel);
+            var caja = CrearRect(overlayConfigurarPartida.transform, "Caja", Vector2.zero, new Vector2(620, 850), colorPanel);
             var cajaRect = caja.GetComponent<RectTransform>();
             cajaRect.anchorMin = new Vector2(0.5f, 0.5f);
             cajaRect.anchorMax = new Vector2(0.5f, 0.5f);
@@ -1937,15 +1982,53 @@ private void AsegurarCursorVisible()
             textoMaximoEspeciales = CrearTexto(caja.transform, "TextoMaximoEspeciales", "", new Vector2(20, 440), new Vector2(580, 40),
                 12, FontStyle.Normal, TextAnchor.MiddleCenter, colorTextoSecundario);
 
+            // --- Minas y escudo (turnos) ---
+            CrearTexto(caja.transform, "EtiquetaTurnosMina", "TURNOS PARA ACTIVAR MINAS", new Vector2(0, 490), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoTurnosMina = CrearControlCantidadEspecial(caja.transform, "TurnosMina", 0f, 517f, () => CambiarTurnosMina(-5),
+                () => CambiarTurnosMina(-1), () => CambiarTurnosMina(1), () => CambiarTurnosMina(5));
+
+            CrearTexto(caja.transform, "EtiquetaTurnosEscudo", "TURNOS DE ESCUDO ACTIVO", new Vector2(310, 490), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoTurnosEscudo = CrearControlCantidadEspecial(caja.transform, "TurnosEscudo", 310f, 517f, () => CambiarTurnosEscudo(-5),
+                () => CambiarTurnosEscudo(-1), () => CambiarTurnosEscudo(1), () => CambiarTurnosEscudo(5));
+
+            // --- Daño de AMT (MISIL y MINA salen de él) y curación de hospitales ---
+            CrearTexto(caja.transform, "EtiquetaDanioAmt",
+                $"DAÑO AMT ({ReglasPartida.DanioAmtMin}-{ReglasPartida.DanioAmtMax})", new Vector2(0, 580), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoDanioAmt = CrearControlCantidadEspecial(caja.transform, "DanioAmt", 0f, 607f, () => CambiarDanioAmt(-5),
+                () => CambiarDanioAmt(-1), () => CambiarDanioAmt(1), () => CambiarDanioAmt(5));
+
+            CrearTexto(caja.transform, "EtiquetaCuracionHospital", "CURACIÓN EN HOSPITAL (%)", new Vector2(310, 580), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoCuracionHospital = CrearControlCantidadEspecial(caja.transform, "CuracionHospital", 310f, 607f, () => CambiarCuracionHospital(-5),
+                () => CambiarCuracionHospital(-1), () => CambiarCuracionHospital(1), () => CambiarCuracionHospital(5));
+
+            // --- REPARAR: cuántas veces por tanque y cuánta vida recupera cada vez ---
+            CrearTexto(caja.transform, "EtiquetaReparaciones",
+                $"REPARACIONES POR TANQUE ({ReglasPartida.ReparacionesMin}-{ReglasPartida.ReparacionesMax})", new Vector2(0, 655), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoReparaciones = CrearControlCantidadEspecial(caja.transform, "Reparaciones", 0f, 682f, () => CambiarReparaciones(-5),
+                () => CambiarReparaciones(-1), () => CambiarReparaciones(1), () => CambiarReparaciones(5));
+
+            CrearTexto(caja.transform, "EtiquetaCuracionReparar", "VIDA POR REPARAR (%)", new Vector2(310, 655), new Vector2(310, 24),
+                14, FontStyle.Bold, TextAnchor.MiddleCenter, colorTextoSecundario);
+            textoCuracionReparar = CrearControlCantidadEspecial(caja.transform, "CuracionReparar", 310f, 682f, () => CambiarCuracionReparar(-5),
+                () => CambiarCuracionReparar(-1), () => CambiarCuracionReparar(1), () => CambiarCuracionReparar(5));
+
+            textoDaniosDerivados = CrearTexto(caja.transform, "TextoDaniosDerivados", "", new Vector2(20, 740), new Vector2(580, 24),
+                12, FontStyle.Normal, TextAnchor.MiddleCenter, colorTextoSecundario);
+
             // --- Confirmar / cancelar ---
-            var botonConfirmar = CrearRect(caja.transform, "BotonConfirmar", new Vector2(20, 500), new Vector2(280, 50), colorBotonAccentoVerde);
+            var botonConfirmar = CrearRect(caja.transform, "BotonConfirmar", new Vector2(20, 785), new Vector2(280, 50), colorBotonAccentoVerde);
             var confirmarBtn = botonConfirmar.AddComponent<Button>();
             confirmarBtn.targetGraphic = botonConfirmar.GetComponent<Image>();
             confirmarBtn.onClick.AddListener(ConfirmarIniciarPartida);
             CrearTexto(botonConfirmar.transform, "Texto", "INICIAR PARTIDA", Vector2.zero, new Vector2(280, 50),
                 16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
 
-            var botonCancelar = CrearRect(caja.transform, "BotonCancelar", new Vector2(320, 500), new Vector2(280, 50), colorBoton);
+            var botonCancelar = CrearRect(caja.transform, "BotonCancelar", new Vector2(320, 785), new Vector2(280, 50), colorBoton);
             var cancelarBtn = botonCancelar.AddComponent<Button>();
             cancelarBtn.targetGraphic = botonCancelar.GetComponent<Image>();
             cancelarBtn.onClick.AddListener(CerrarOverlayConfigurarPartida);
@@ -2158,6 +2241,62 @@ private void AsegurarCursorVisible()
             if (textoMisilesPorTanque != null) textoMisilesPorTanque.text = misilesPorTanqueElegido.ToString();
         }
 
+        private void CambiarTurnosMina(int delta)
+        {
+            reglasElegidas.turnosActivacionMina = Mathf.Clamp(reglasElegidas.turnosActivacionMina + delta,
+                ReglasPartida.TurnosMinaMin, ReglasPartida.TurnosMinaMax);
+            ActualizarTextosReglas();
+        }
+
+        private void CambiarTurnosEscudo(int delta)
+        {
+            reglasElegidas.turnosEscudo = Mathf.Clamp(reglasElegidas.turnosEscudo + delta,
+                ReglasPartida.TurnosEscudoMin, ReglasPartida.TurnosEscudoMax);
+            ActualizarTextosReglas();
+        }
+
+        private void CambiarDanioAmt(int delta)
+        {
+            reglasElegidas.danioAmt = Mathf.Clamp(reglasElegidas.danioAmt + delta,
+                ReglasPartida.DanioAmtMin, ReglasPartida.DanioAmtMax);
+            ActualizarTextosReglas();
+        }
+
+        private void CambiarCuracionHospital(int delta)
+        {
+            reglasElegidas.curacionHospital = Mathf.Clamp(reglasElegidas.curacionHospital + delta,
+                ReglasPartida.CuracionHospitalMin, ReglasPartida.CuracionHospitalMax);
+            ActualizarTextosReglas();
+        }
+
+        private void CambiarReparaciones(int delta)
+        {
+            reglasElegidas.reparaciones = Mathf.Clamp(reglasElegidas.reparaciones + delta,
+                ReglasPartida.ReparacionesMin, ReglasPartida.ReparacionesMax);
+            ActualizarTextosReglas();
+        }
+
+        private void CambiarCuracionReparar(int delta)
+        {
+            reglasElegidas.curacionReparar = Mathf.Clamp(reglasElegidas.curacionReparar + delta,
+                ReglasPartida.CuracionRepararMin, ReglasPartida.CuracionRepararMax);
+            ActualizarTextosReglas();
+        }
+
+        private void ActualizarTextosReglas()
+        {
+            if (textoReparaciones != null) textoReparaciones.text = reglasElegidas.reparaciones.ToString();
+            if (textoCuracionReparar != null) textoCuracionReparar.text = reglasElegidas.curacionReparar.ToString();
+            if (textoTurnosMina != null) textoTurnosMina.text = reglasElegidas.turnosActivacionMina.ToString();
+            if (textoTurnosEscudo != null) textoTurnosEscudo.text = reglasElegidas.turnosEscudo.ToString();
+            if (textoDanioAmt != null) textoDanioAmt.text = reglasElegidas.danioAmt.ToString();
+            if (textoCuracionHospital != null) textoCuracionHospital.text = reglasElegidas.curacionHospital.ToString();
+            if (textoDaniosDerivados != null)
+                textoDaniosDerivados.text =
+                    $"AMT {reglasElegidas.DanioAmt:0.#}%  |  MISIL {reglasElegidas.DanioMisil:0.#}% (AMT x2)  |  " +
+                    $"MINA {reglasElegidas.DanioMina:0.#}% (AMT x1.5)";
+        }
+
         // Abre el overlay de configuración de partida con los valores por defecto
         // (o los últimos elegidos, si el jugador ya lo había abierto antes en esta
         // misma sesión de la pantalla de programación).
@@ -2167,6 +2306,7 @@ private void AsegurarCursorVisible()
             if (textoMisilesPorTanque != null) textoMisilesPorTanque.text = misilesPorTanqueElegido.ToString();
             AjustarEspecialesAlMaximo();
             ActualizarTextosEspeciales();
+            ActualizarTextosReglas();
             if (fundidoConfigurarPartida != null) { fundidoConfigurarPartida.interactable = true; fundidoConfigurarPartida.alpha = 0f; }
             overlayConfigurarPartida.SetActive(true);
             IniciarFundidoConfigurarPartida(0f, 1f, true);
@@ -2251,7 +2391,7 @@ private void AsegurarCursorVisible()
             if (corrutinaFundidoConfigurarPartida != null) StopCoroutine(corrutinaFundidoConfigurarPartida);
 
             ConfiguracionPartidaPendiente.Establecer(new List<string>(scriptsPorTanque), new List<TanqueSkinDatos>(skinsPorTanque),
-                tamanoTablero, biomaElegido, misilesPorTanqueElegido, rocasElegidas, hospitalesElegidos);
+                tamanoTablero, biomaElegido, misilesPorTanqueElegido, rocasElegidas, hospitalesElegidos, reglasElegidas);
 
             var carga = SceneManager.LoadSceneAsync(nombreEscenaJuego);
             carga.allowSceneActivation = false;
@@ -2329,6 +2469,12 @@ private void AsegurarCursorVisible()
         // ROSA DE LOS VIENTOS.
         // ------------------------------------------------------------------
 
+        // Botones diagonales (NO, NE, SE, SO): solo se habilitan cuando la instrucción
+        // que se está editando es MINA; MOV/AMT/RADAR/MISIL solo admiten N, S, E, O.
+        private readonly List<Button> botonesDiagonales = new List<Button>();
+        private int ultimoCursorDeteccion = -1;
+        private string ultimoTextoDeteccion;
+
         private void ConstruirPanelRosaVientos(Transform padre)
         {
             panelRosaVientos = CrearRectAncladoEsquina(padre, "PanelRosaVientos",
@@ -2342,20 +2488,32 @@ private void AsegurarCursorVisible()
             textoInstruccionPendienteDireccion = CrearTexto(panelRosaVientos.transform, "Pendiente", "—",
                 new Vector2(10, 32), new Vector2(130, 18), 11, FontStyle.Normal, TextAnchor.MiddleCenter, colorTextoSecundario);
 
-            CrearBotonDireccion(panelRosaVientos.transform, "N", new Vector2(55, 55), () => OnSeleccionarDireccion('N'));
-            CrearBotonDireccion(panelRosaVientos.transform, "O", new Vector2(15, 95), () => OnSeleccionarDireccion('O'));
-            CrearBotonDireccion(panelRosaVientos.transform, "E", new Vector2(95, 95), () => OnSeleccionarDireccion('E'));
-            CrearBotonDireccion(panelRosaVientos.transform, "S", new Vector2(55, 135), () => OnSeleccionarDireccion('S'));
+            // Cuadrícula 3x3 (columnas x = 15/55/95, filas y = 55/95/135):
+            //   NO  N  NE
+            //   O   .  E
+            //   SO  S  SE
+            botonesDiagonales.Clear();
+            CrearBotonDireccion(panelRosaVientos.transform, "N", new Vector2(55, 55), () => OnSeleccionarDireccion("N"));
+            CrearBotonDireccion(panelRosaVientos.transform, "O", new Vector2(15, 95), () => OnSeleccionarDireccion("O"));
+            CrearBotonDireccion(panelRosaVientos.transform, "E", new Vector2(95, 95), () => OnSeleccionarDireccion("E"));
+            CrearBotonDireccion(panelRosaVientos.transform, "S", new Vector2(55, 135), () => OnSeleccionarDireccion("S"));
+
+            botonesDiagonales.Add(CrearBotonDireccion(panelRosaVientos.transform, "NO", new Vector2(15, 55), () => OnSeleccionarDireccion("NO"), 15));
+            botonesDiagonales.Add(CrearBotonDireccion(panelRosaVientos.transform, "NE", new Vector2(95, 55), () => OnSeleccionarDireccion("NE"), 15));
+            botonesDiagonales.Add(CrearBotonDireccion(panelRosaVientos.transform, "SO", new Vector2(15, 135), () => OnSeleccionarDireccion("SO"), 15));
+            botonesDiagonales.Add(CrearBotonDireccion(panelRosaVientos.transform, "SE", new Vector2(95, 135), () => OnSeleccionarDireccion("SE"), 15));
+            foreach (var b in botonesDiagonales) b.interactable = false;
         }
 
-        private void CrearBotonDireccion(Transform padre, string letra, Vector2 posicion, UnityEngine.Events.UnityAction accion)
+        private Button CrearBotonDireccion(Transform padre, string letra, Vector2 posicion, UnityEngine.Events.UnityAction accion, int tamanoFuente = 18)
         {
             var go = CrearRect(padre, $"BotonDireccion_{letra}", posicion, new Vector2(40, 40), colorBoton);
             var boton = go.AddComponent<Button>();
             boton.targetGraphic = go.GetComponent<Image>();
             boton.onClick.AddListener(accion);
             CrearTexto(go.transform, "Texto", letra, Vector2.zero, new Vector2(40, 40),
-                18, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+                tamanoFuente, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
+            return boton;
         }
 
         private bool BuscarInstruccionPendiente(string texto, int cursor, out string comandoEncontrado, out int indice, out int longitud)
@@ -2365,11 +2523,13 @@ private void AsegurarCursorVisible()
             longitud = 0;
             int mejorDistancia = int.MaxValue;
 
-            foreach (var comando in comandosQueRequierenDireccion)
+            foreach (var comando in ComandosConDireccion)
             {
                 if (string.IsNullOrWhiteSpace(comando)) continue;
 
-                foreach (Match match in Regex.Matches(texto, $@"{Regex.Escape(comando)}\([NSEO]?\)"))
+                // MINA admite además las 4 diagonales; el resto solo N, S, E, O.
+                string direcciones = comando == "MINA" ? "(?:NO|NE|SE|SO|[NSEO])?" : "[NSEO]?";
+                foreach (Match match in Regex.Matches(texto, $@"{Regex.Escape(comando)}\({direcciones}\)"))
                 {
                     int inicioMatch = match.Index;
                     int finMatch = match.Index + match.Length;
@@ -2403,17 +2563,24 @@ private void AsegurarCursorVisible()
 
         private void ActualizarDeteccionDireccion()
         {
-            bool hayInstruccion = BuscarInstruccionPendiente(campoEditor.text, ObtenerCursorActual(), out _, out int indice, out int longitud);
+            bool hayInstruccion = BuscarInstruccionPendiente(campoEditor.text, ObtenerCursorActual(), out string comandoPendiente, out int indice, out int longitud);
             textoInstruccionPendienteDireccion.text = hayInstruccion
                 ? $"Editando: {campoEditor.text.Substring(indice, longitud)}"
                 : "—";
+
+            bool admiteDiagonales = hayInstruccion && comandoPendiente == "MINA";
+            foreach (var b in botonesDiagonales)
+                if (b != null) b.interactable = admiteDiagonales;
         }
 
-        private void OnSeleccionarDireccion(char letra)
+        private void OnSeleccionarDireccion(string letra)
         {
             string texto = campoEditor.text;
             if (!BuscarInstruccionPendiente(texto, ObtenerCursorActual(), out string comando, out int indice, out int longitud))
                 return;
+
+            // Las diagonales solo existen para MINA.
+            if (letra.Length > 1 && comando != "MINA") return;
 
             string reemplazo = $"{comando}({letra})";
             texto = texto.Remove(indice, longitud).Insert(indice, reemplazo);
@@ -2901,7 +3068,8 @@ private void AsegurarCursorVisible()
 
             try
             {
-                File.WriteAllText(ruta, entrada.contenido);
+                // Todo lo exportado sale en MAYÚSCULAS puras.
+                File.WriteAllText(ruta, (entrada.contenido ?? string.Empty).ToUpperInvariant());
                 overlayNombreArchivo.SetActive(false);
                 ActualizarTextoEstado($"Guardado en \"{ruta}\"", esError: false);
             }
