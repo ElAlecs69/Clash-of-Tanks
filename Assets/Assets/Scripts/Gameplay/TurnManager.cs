@@ -71,6 +71,17 @@ namespace TanksGame.Gameplay
         public int Valor;
     }
 
+    // Una mina colocada en una casilla VECINA (MINA(dir)) durante la ronda, con
+    // los datos que la vista necesita para animar el lanzamiento desde el
+    // tanque hasta esa casilla. MINA() en la casilla propia no genera evento:
+    // ahí la mina simplemente queda debajo del tanque.
+    public class MinaLanzadaEvent
+    {
+        public int ShooterId;
+        public Vector2Int Origin;
+        public Vector2Int Destino;
+    }
+
     public enum DamageEventType { Mina, Choque, Desgaste, Curacion }
 
     // Un daño ocurrido durante la ronda que NO viene de un disparo (mina,
@@ -105,6 +116,8 @@ namespace TanksGame.Gameplay
         public List<string> LastRoundLog = new List<string>();
         public List<ShotEvent> LastRoundShots = new List<ShotEvent>();
         public List<RadarEvent> LastRoundRadars = new List<RadarEvent>();
+        // Minas lanzadas a casillas vecinas esta ronda (MINA(dir)).
+        public List<MinaLanzadaEvent> LastRoundMinasLanzadas = new List<MinaLanzadaEvent>();
         // Eventos de daño de esta ronda que NO son disparos, EN ORDEN
         // (minas primero, luego choques, luego desgaste -- el mismo orden
         // en que ExecuteRound los procesa).
@@ -179,6 +192,7 @@ namespace TanksGame.Gameplay
             LastRoundLog.Clear();
             LastRoundShots.Clear();
             LastRoundRadars.Clear();
+            LastRoundMinasLanzadas.Clear();
             LastRoundDamageEvents.Clear();
             llegadasAHospital.Clear();
             bool huboDanio = false;
@@ -363,7 +377,18 @@ namespace TanksGame.Gameplay
                     if (!Board.PlaceMine(celdaMina))
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: {instruction} inválida, no se puede colocar la mina en {celdaMina}.");
                     else
+                    {
                         LastRoundLog.Add($"Jugador {tank.PlayerId}: coloca una mina en {celdaMina}.");
+                        // Solo las minas de casillas vecinas se "lanzan"; la de la
+                        // casilla propia queda bajo el tanque sin animación.
+                        if (instruction.MinaDir != DireccionMina.Propia)
+                            LastRoundMinasLanzadas.Add(new MinaLanzadaEvent
+                            {
+                                ShooterId = tank.PlayerId,
+                                Origin = tank.Position,
+                                Destino = celdaMina
+                            });
+                    }
                     RegistrarTurnoNoAtascado(agent);
                     break;
                 }

@@ -1,8 +1,0 @@
-[Licensing::Module] Trying to connect to existing licensing client channel...
-Built from '6000.5/staging' branch; Version is '6000.5.10f1 (3bd4f66ad299) revision 3921142'; Using compiler version '194234433'; Build Type 'Release'
-OS: 'Windows 10  (10.0.19044) 64bit EnterpriseS' Language: 'es' Physical Memory: 16327 MB
-[Licensing::IpcConnector] Successfully connected to: "LicenseClient-aestradam014" at "2026-11-20T23:27:14.5843723Z"
-BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
-System  architecture: x64
-Process architecture: x64
-Date: 2026-11-20T23:27:14Z

@@ -330,7 +330,16 @@ namespace TanksGame.Gameplay
             if (vistaTablero != null)
             {
                 vistaTablero.ActualizarTanques(datosVisuales, animarMovimiento: false);
-                vistaTablero.AgregarMinas(board.MinePositions());
+                // Las minas lanzadas a una casilla vecina NO se dibujan aquí: las
+                // crea BoardView cuando termina su animación de lanzamiento (en
+                // el paso del tanque que la lanzó). El resto (MINA() en la propia
+                // casilla, o minas de rondas anteriores) sí aparece directo.
+                var minasLanzadasPorJugador = turnManager.LastRoundMinasLanzadas
+                    .GroupBy(m => m.ShooterId)
+                    .ToDictionary(g => g.Key, g => g.First());
+                var celdasEnVuelo = new HashSet<Vector2Int>(
+                    turnManager.LastRoundMinasLanzadas.Select(m => m.Destino));
+                vistaTablero.AgregarMinas(board.MinePositions().Where(c => !celdasEnVuelo.Contains(c)));
 
                 // Se copia cada disparo a un diccionario propio de esta
                 // llamada: turnManager.LastRoundShots es la MISMA lista que
@@ -359,7 +368,8 @@ namespace TanksGame.Gameplay
                               && antes != a.Tank.Position,
                     Destino = a.Tank.Position,
                     Disparo = disparosPorJugador.TryGetValue(a.Tank.PlayerId, out var disparo) ? disparo : null,
-                    Radar = radaresPorJugador.TryGetValue(a.Tank.PlayerId, out var radarEv) ? radarEv : null
+                    Radar = radaresPorJugador.TryGetValue(a.Tank.PlayerId, out var radarEv) ? radarEv : null,
+                    MinaLanzada = minasLanzadasPorJugador.TryGetValue(a.Tank.PlayerId, out var minaEv) ? minaEv : null
                 }).ToList();
 
                 // Igual que con los disparos: se copian los eventos a listas

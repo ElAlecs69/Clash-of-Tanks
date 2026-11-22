@@ -2795,24 +2795,136 @@ namespace TanksGame.Visual
         // ---------------------------------------------------------------------
         private readonly Dictionary<Vector2Int, GameObject> minasVisuales = new Dictionary<Vector2Int, GameObject>();
 
+        // Celdas cuya mina sigue "volando" (animación de lanzamiento en curso):
+        // AgregarMinas() las ignora para no crear un marcador duplicado.
+        private readonly HashSet<Vector2Int> minasEnVuelo = new HashSet<Vector2Int>();
+
         public void AgregarMinas(IEnumerable<Vector2Int> celdasConMina)
         {
             foreach (var celda in celdasConMina)
             {
-                if (minasVisuales.ContainsKey(celda)) continue;
+                if (minasVisuales.ContainsKey(celda) || minasEnVuelo.Contains(celda)) continue;
 
-                var raiz = new GameObject("Mina").transform;
-                raiz.SetParent(contenedorTanques, true);
-                raiz.position = PuntoDeFuegoEnCelda(celda.x, celda.y, 0.03f);
-
-                CrearPieza(raiz, PrimitiveType.Cylinder, Vector3.zero,
-                    new Vector3(0.22f, 0.02f, 0.22f), new Color(0.12f, 0.12f, 0.1f));
-                CrearPieza(raiz, PrimitiveType.Sphere, Vector3.up * 0.03f,
-                    new Vector3(0.07f, 0.07f, 0.07f), new Color(0.8f, 0.1f, 0.05f));
-
+                var raiz = CrearModeloMina(PuntoDeFuegoEnCelda(celda.x, celda.y, 0.03f));
                 minasVisuales[celda] = raiz.gameObject;
                 StartCoroutine(ParpadeoMina(raiz));
             }
+        }
+
+        // Modelo de la mina (disco oscuro + luz roja). Hijo 0 = disco, hijo 1 =
+        // luz (la usa ParpadeoMina).
+        private Transform CrearModeloMina(Vector3 posicionMundo)
+        {
+            var raiz = new GameObject("Mina").transform;
+            raiz.SetParent(contenedorTanques, true);
+            raiz.position = posicionMundo;
+
+            CrearPieza(raiz, PrimitiveType.Cylinder, Vector3.zero,
+                new Vector3(0.22f, 0.02f, 0.22f), new Color(0.12f, 0.12f, 0.1f));
+            CrearPieza(raiz, PrimitiveType.Sphere, Vector3.up * 0.03f,
+                new Vector3(0.07f, 0.07f, 0.07f), new Color(0.8f, 0.1f, 0.05f));
+            return raiz;
+        }
+
+        // Lanzamiento de una mina a una casilla vecina (MINA(dir)): el tanque
+        // gira hacia la casilla, la mina sale de su torreta, describe un arco
+        // girando sobre sí misma y cae en la casilla con un rebote y una nube
+        // de polvo. Recién al aterrizar queda registrada como marcador
+        // permanente (y empieza a parpadear).
+        private System.Collections.IEnumerator ReproducirLanzamientoMina(MinaLanzadaEvent lanzamiento)
+        {
+            var celda = lanzamiento.Destino;
+            // Si por algún motivo ya hay un marcador ahí, no hay nada que lanzar.
+            if (minasVisuales.ContainsKey(celda)) yield break;
+
+            float alturaTorreta = 0.45f * _escalaObjetos;
+            Vector3 destino = PuntoDeFuegoEnCelda(celda.x, celda.y, 0.03f);
+            Vector3 origen = tanquesVisuales.TryGetValue(lanzamiento.ShooterId, out var visualTanque) && visualTanque != null
+                ? visualTanque.position + Vector3.up * alturaTorreta
+                : PuntoDeFuegoEnCelda(lanzamiento.Origin.x, lanzamiento.Origin.y, alturaTorreta);
+
+            // El tanque encara la casilla antes de soltar la mina, igual que al
+            // disparar o usar el radar.
+            if (visualTanque != null)
+                yield return GirarTanqueHaciaDisparo(visualTanque, destino);
+
+            minasEnVuelo.Add(celda);
+            var raiz = CrearModeloMina(origen);
+
+            // Arco parabólico: la altura crece con la distancia (las diagonales
+            // son más largas que las laterales).
+            float distancia = Vector3.Distance(origen, destino);
+            float alturaArco = Mathf.Max(0.45f * _escalaObjetos, 0.4f * distancia);
+            const float duracion = 0.6f;
+            Vector3 giro = new Vector3(540f, 360f, 0f);
+
+            float t = 0f;
+            while (t < duracion)
+            {
+                if (raiz == null) { minasEnVuelo.Remove(celda); yield break; }
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / duracion);
+                var pos = Vector3.Lerp(origen, destino, k);
+                pos.y += alturaArco * 4f * k * (1f - k); // parábola: 0 en los extremos, máximo en k=0.5
+                raiz.position = pos;
+                raiz.rotation = Quaternion.Euler(giro * k);
+                yield return null;
+            }
+
+            if (raiz == null) { minasEnVuelo.Remove(celda); yield break; }
+
+            // Aterrizaje: queda plana, con una nube de polvo y un pequeño rebote.
+            raiz.position = destino;
+            raiz.rotation = Quaternion.identity;
+            minasEnVuelo.Remove(celda);
+            minasVisuales[celda] = raiz.gameObject;
+            StartCoroutine(PolvoDeAterrizaje(destino));
+            StartCoroutine(ParpadeoMina(raiz));
+            yield return RebotarMina(raiz, destino);
+        }
+
+        // Pequeño rebote vertical al caer (dos saltitos que se amortiguan).
+        private System.Collections.IEnumerator RebotarMina(Transform raiz, Vector3 reposo)
+        {
+            float[] alturas = { 0.18f * _escalaObjetos, 0.07f * _escalaObjetos };
+            foreach (float altura in alturas)
+            {
+                const float duracion = 0.14f;
+                float t = 0f;
+                while (t < duracion)
+                {
+                    if (raiz == null) yield break;
+                    t += Time.deltaTime;
+                    float k = Mathf.Clamp01(t / duracion);
+                    raiz.position = reposo + Vector3.up * (altura * 4f * k * (1f - k));
+                    yield return null;
+                }
+            }
+            if (raiz != null) raiz.position = reposo;
+        }
+
+        // Nube de polvo: una esfera gris que se infla y se encoge al caer la mina.
+        private System.Collections.IEnumerator PolvoDeAterrizaje(Vector3 posicion)
+        {
+            var nube = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            nube.transform.SetParent(transform, true);
+            nube.transform.position = posicion + Vector3.up * (0.05f * _escalaObjetos);
+            var col = nube.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+            var rend = nube.GetComponent<Renderer>();
+            if (rend != null)
+                rend.material = new Material(ObtenerShaderEstandar()) { color = new Color(0.55f, 0.5f, 0.42f) };
+
+            const float duracion = 0.35f;
+            float t = 0f;
+            while (t < duracion)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / duracion);
+                nube.transform.localScale = new Vector3(1f, 0.45f, 1f) * Mathf.Lerp(0.1f, 0.5f, Mathf.Sin(k * Mathf.PI)) * tamanoCelda * _escalaObjetos;
+                yield return null;
+            }
+            Destroy(nube);
         }
 
         // ---------------------------------------------------------------------
@@ -3004,6 +3116,7 @@ namespace TanksGame.Visual
             public Vector2Int Destino;
             public ShotEvent Disparo; // null si ese tanque no disparó esta ronda
             public RadarEvent Radar;  // null si ese tanque no usó RADAR esta ronda
+            public MinaLanzadaEvent MinaLanzada; // null si no lanzó una mina a una casilla vecina
         }
 
         // Espejo visual de Gameplay.DamageEvent: mina, choque o desgaste.
@@ -3057,6 +3170,9 @@ namespace TanksGame.Visual
 
                 if (paso.Disparo != null)
                     yield return ReproducirUnDisparo(paso.Disparo);
+
+                if (paso.MinaLanzada != null)
+                    yield return ReproducirLanzamientoMina(paso.MinaLanzada);
             }
 
             if (eventos != null)
@@ -3651,6 +3767,8 @@ namespace TanksGame.Visual
 
             tanquesVisuales.Clear();
             _ultimaVidaVisual.Clear();
+            minasVisuales.Clear();
+            minasEnVuelo.Clear();
             posicionesCampamentos.Clear();
             huellasMontanas.Clear();
 
