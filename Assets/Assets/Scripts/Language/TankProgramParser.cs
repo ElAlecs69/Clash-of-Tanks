@@ -9,13 +9,16 @@ namespace TanksGame.Language
     // Convierte texto del mini-lenguaje en una lista de ProgramStep ejecutable por el
     // TurnManager.
     //
-    // Condicional (una sola linea, una sola accion):
-    //   IF (RADAR(N) > 0) THEN (MISIL(N))
-    //   IF (VIDA < 40) THEN (REPARAR)
+    // Condicional (una sola linea, una sola accion), SIN parentesis externos:
+    //   IF RADAR(N) > 0 THEN MISIL(N)
+    //   IF VIDA < 40 THEN REPARAR
     //
     // La condicion puede encadenar varias condiciones simples con "Y" o "AND"
     // (todas deben cumplirse):
-    //   IF (RADAR(N) < 0 Y RADAR(O) < 0) THEN (MOV(S))
+    //   IF RADAR(N) < 0 Y RADAR(O) < 0 THEN MOV(S)
+    //
+    // Compatibilidad: la forma antigua con parentesis alrededor de la condicion y/o
+    // de la accion, IF (RADAR(N) > 0) THEN (MISIL(N)), sigue aceptandose.
     //
     // MINA coloca UNA mina por uso. Formas:
     //   MINA()      -> en la casilla del tanque
@@ -42,7 +45,11 @@ namespace TanksGame.Language
         private static readonly Regex InicioIfRegex =
             new Regex(@"^IF(?![A-Za-z0-9_])", RegexOptions.IgnoreCase);
 
-        private const string AyudaIf = "El IF se escribe en una sola línea: IF (condición) THEN (acción).";
+        // La palabra THEN como token suelto (no parte de otra palabra).
+        private static readonly Regex ThenRegex =
+            new Regex(@"(?<![A-Za-z0-9_])THEN(?![A-Za-z0-9_])", RegexOptions.IgnoreCase);
+
+        private const string AyudaIf = "El IF se escribe en una sola línea: IF condición THEN acción. Ej.: IF RADAR(N) > 0 THEN MISIL(N).";
 
         private static readonly Regex ConditionRegex =
             new Regex(@"^(VIDA|MISILES|RADAR\(([NSEO])\))\s*(>=|<=|==|=|>|<)\s*(-?\d+(\.\d+)?)$",
@@ -138,40 +145,43 @@ namespace TanksGame.Language
             return -1;
         }
 
-        // Separa "IF (condición) THEN (acción)" en sus dos partes (sin los
-        // parentesis externos). Lanza FormatException si la linea no respeta esa forma.
+        // Si 'texto' esta completamente envuelto en un par de parentesis "(...)", los
+        // quita (repetidamente). Sirve para aceptar tambien la forma antigua
+        // IF (cond) THEN (accion). "RADAR(N)>0" NO se toca porque no empieza con '('.
+        private static string QuitarParentesisExternos(string texto)
+        {
+            texto = texto.Trim();
+            while (texto.Length >= 2 && texto[0] == '(' &&
+                   IndiceCierreParentesis(texto, 0) == texto.Length - 1)
+            {
+                texto = texto.Substring(1, texto.Length - 2).Trim();
+            }
+            return texto;
+        }
+
+        // Separa "IF condición THEN acción" en sus dos partes. Lanza FormatException si
+        // la linea no respeta esa forma.
         private static void ParseLineaIf(string line, out string condicion, out string accion)
         {
-            string resto = line.Substring(2).TrimStart();
-            if (resto.Length == 0 || resto[0] != '(')
-                throw new FormatException($"Falta el paréntesis de la condición. {AyudaIf}");
+            string resto = line.Substring(2).Trim();
+            if (resto.Length == 0)
+                throw new FormatException($"Falta la condición después de IF. {AyudaIf}");
 
-            int cierreCondicion = IndiceCierreParentesis(resto, 0);
-            if (cierreCondicion < 0)
-                throw new FormatException($"Falta cerrar el paréntesis de la condición. {AyudaIf}");
+            var matches = ThenRegex.Matches(resto);
+            if (matches.Count == 0)
+                throw new FormatException($"Falta THEN después de la condición. {AyudaIf}");
+            if (matches.Count > 1)
+                throw new FormatException($"Solo puede haber un THEN por línea. {AyudaIf}");
 
-            condicion = resto.Substring(1, cierreCondicion - 1).Trim();
+            var then = matches[0];
+
+            condicion = QuitarParentesisExternos(resto.Substring(0, then.Index));
             if (condicion.Length == 0)
                 throw new FormatException($"La condición del IF está vacía. {AyudaIf}");
 
-            string despues = resto.Substring(cierreCondicion + 1).TrimStart();
-            if (!despues.StartsWith("THEN", StringComparison.OrdinalIgnoreCase))
-                throw new FormatException($"Falta THEN después de la condición. {AyudaIf}");
-
-            despues = despues.Substring(4).TrimStart();
-            if (despues.Length == 0 || despues[0] != '(')
-                throw new FormatException($"La acción después de THEN debe ir entre paréntesis. {AyudaIf}");
-
-            int cierreAccion = IndiceCierreParentesis(despues, 0);
-            if (cierreAccion < 0)
-                throw new FormatException($"Falta cerrar el paréntesis de la acción. {AyudaIf}");
-
-            if (despues.Substring(cierreAccion + 1).Trim().Length > 0)
-                throw new FormatException($"No puede haber nada después de THEN (acción). {AyudaIf}");
-
-            accion = despues.Substring(1, cierreAccion - 1).Trim();
+            accion = QuitarParentesisExternos(resto.Substring(then.Index + then.Length));
             if (accion.Length == 0)
-                throw new FormatException($"La acción del IF está vacía. {AyudaIf}");
+                throw new FormatException($"Falta la acción después de THEN. {AyudaIf}");
         }
 
         // Punto de entrada: si el texto trae una o más "Y"/"AND", arma una
@@ -180,7 +190,7 @@ namespace TanksGame.Language
         private static Condition ParseCondition(string text)
         {
             var partes = AndSplitRegex.Split(text.Trim())
-                .Select(p => p.Trim())
+                .Select(QuitarParentesisExternos)
                 .Where(p => p.Length > 0)
                 .ToList();
 

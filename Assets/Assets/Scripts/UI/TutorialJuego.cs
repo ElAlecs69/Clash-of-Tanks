@@ -73,8 +73,8 @@ namespace TanksGame.UI
 
         private const string EjemploCodigo =
             "<color=#777777># Si hay un tanque al norte, dispara</color>\n" +
-            "<color=#4FC3F7>IF</color> (<color=#4FC3F7>RADAR</color>(<color=#FFB74D>N</color>)>0) " +
-            "<color=#4FC3F7>THEN</color> (<color=#4FC3F7>MISIL</color>(<color=#FFB74D>N</color>))\n" +
+            "<color=#4FC3F7>IF</color> <color=#4FC3F7>RADAR</color>(<color=#FFB74D>N</color>) > 0 " +
+            "<color=#4FC3F7>THEN</color> <color=#4FC3F7>MISIL</color>(<color=#FFB74D>N</color>)\n" +
             "<color=#4FC3F7>MOV</color>(<color=#FFB74D>E</color>)";
 
         private static string Entrada(string nombre, string descripcion)
@@ -91,7 +91,7 @@ namespace TanksGame.UI
 
         private static readonly string InstruccionesColumnaB =
             Entrada("RADAR(dir)  <  >  =", "Mide hasta el primer tanque en esa dirección: distancia positiva si hay uno, negativa si no. Ej.: RADAR(N)>0") + "\n\n" +
-            Entrada("IF ( ) THEN ( )", "Ejecuta UNA instrucción solo si se cumple la condición (VIDA, MISILES o RADAR). Une varias con Y. Ej.: IF (VIDA<40) THEN (REPARAR)") + "\n\n" +
+            Entrada("IF ... THEN ...", "Ejecuta UNA instrucción solo si se cumple la condición (VIDA, MISILES o RADAR). Va en una sola línea y sin paréntesis extra. Une varias condiciones con Y. Ej.: IF VIDA < 40 THEN REPARAR") + "\n\n" +
             Entrada("REPARAR", "Estando sobre un hospital, recupera vida (20% por defecto). Cada tanque tiene un número limitado de reparaciones (3 por defecto); ambos valores se eligen al configurar la partida.") + "\n\n" +
             Entrada("ESPERAR", "No hace nada en este turno.") + "\n\n" +
             Entrada("BUCLE", "Tu script se repite solo cuando llega al final.");

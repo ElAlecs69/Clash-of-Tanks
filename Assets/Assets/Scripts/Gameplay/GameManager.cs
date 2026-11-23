@@ -52,12 +52,12 @@ namespace TanksGame.Gameplay
             new ConfiguracionTanque
             {
                 nombre = "Jugador 1",
-                programa = "IF (RADAR(E) > 0) THEN (MISIL(E))\nIF (RADAR(E) < 0) THEN (MOV(E))\nESPERAR"
+                programa = "IF RADAR(E) > 0 THEN MISIL(E)\nIF RADAR(E) < 0 THEN MOV(E)\nESPERAR"
             },
             new ConfiguracionTanque
             {
                 nombre = "Jugador 2",
-                programa = "IF (VIDA < 40) THEN (REPARAR)\nIF (RADAR(O) > 0) THEN (AMT(O))\nMOV(O)"
+                programa = "IF VIDA < 40 THEN REPARAR\nIF RADAR(O) > 0 THEN AMT(O)\nMOV(O)"
             }
         };
 

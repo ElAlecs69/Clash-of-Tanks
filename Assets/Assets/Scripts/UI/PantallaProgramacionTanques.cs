@@ -793,7 +793,7 @@ namespace TanksGame.UI
                 ("RADAR (dir) <", "RADAR()<"),
                 ("RADAR (dir) >", "RADAR()>"),
                 ("RADAR (dir) =", "RADAR()="),
-                ("IF ( ) THEN ( )", "IF ( ) THEN ( )"),
+                ("IF ... THEN ...", FragmentoIf),
                 ("ESCUDO", "ESCUDO"),
                 ("REPARAR", "REPARAR"),
                 ("ESPERAR", "ESPERAR"),
@@ -850,6 +850,30 @@ namespace TanksGame.UI
                 16, FontStyle.Bold, TextAnchor.MiddleCenter, colorTexto);
         }
 
+        // Plantilla del condicional: una sola linea, sin parentesis. El cursor queda
+        // despues de "IF " (ver InsertarEnEditor) para elegir la condicion con RADAR, etc.
+        private const string FragmentoIf = "IF  THEN ";
+        private const int CursorEnFragmentoIf = 3; // justo despues de "IF "
+
+        private static readonly Regex InicioIfEditorRegex =
+            new Regex(@"^IF(?![A-Za-z0-9_])", RegexOptions.IgnoreCase);
+        private static readonly Regex ThenEditorRegex =
+            new Regex(@"(?<![A-Za-z0-9_])THEN(?![A-Za-z0-9_])", RegexOptions.IgnoreCase);
+
+        // true si el texto de la linea ANTERIOR al cursor es un IF todavia "abierto": o aun
+        // no tiene THEN (el cursor esta en la condicion) o tiene THEN pero nada despues (el
+        // cursor esta donde va la accion). En esos casos lo que se inserta debe quedarse en
+        // la MISMA linea; un salto de linea partiria el IF y el parser lo rechazaria.
+        private static bool CursorDentroDeIfAbierto(string antesEnLinea)
+        {
+            string t = antesEnLinea.TrimStart();
+            if (!InicioIfEditorRegex.IsMatch(t)) return false;
+
+            var m = ThenEditorRegex.Match(t);
+            if (!m.Success) return true;
+            return string.IsNullOrWhiteSpace(t.Substring(m.Index + m.Length));
+        }
+
         private void InsertarEnEditor(string fragmento)
 {
     if (campoEditor == null || string.IsNullOrEmpty(fragmento)) return;
@@ -857,25 +881,37 @@ namespace TanksGame.UI
     string texto = campoEditor.text;
     int posicion = Mathf.Clamp(ObtenerCursorActual(), 0, texto.Length);
 
-    // Regla permanente: una instrucción insertada con un botón siempre arranca su propia
-    // línea. Solo se omite el salto en dos casos posicionales (no de estado):
-    //  - la línea actual está vacía hasta el cursor (incluye el cuerpo indentado de un IF
-    //    y el documento vacío): ya estamos en una línea libre, no hace falta otra.
-    //  - el cursor está justo antes de un ")": estamos dentro de la condición de un IF,
-    //    donde un salto de línea la partiría al medio.
     int inicioLinea = posicion > 0 ? texto.LastIndexOf('\n', posicion - 1) + 1 : 0;
     string antesEnLinea = texto.Substring(inicioLinea, posicion - inicioLinea);
 
+    // Regla: una instrucción insertada con un botón arranca su propia línea, salvo que:
+    //  - la línea actual esté vacía hasta el cursor (ya estamos en una línea libre).
+    //  - el cursor esté justo antes de un ")" (dentro de unos paréntesis; forma antigua).
+    //  - el cursor esté dentro de un IF abierto (en la condición o tras THEN): el IF va
+    //    entero en UNA línea, así que RADAR(...), MISIL(...), etc. se insertan ahí mismo.
     bool lineaLibre = string.IsNullOrWhiteSpace(antesEnLinea);
     bool dentroDeCondicion = posicion < texto.Length && texto[posicion] == ')';
+    bool esIf = fragmento == FragmentoIf;
+    bool dentroDeIf = !esIf && CursorDentroDeIfAbierto(antesEnLinea);
 
-    string prefijo = (lineaLibre || dentroDeCondicion) ? "" : "\n";
+    string prefijo;
+    if (dentroDeIf)
+    {
+        // Misma línea; solo aseguramos un espacio de separación (p. ej. "IF|" -> "IF RADAR()<").
+        char anterior = antesEnLinea.Length > 0 ? antesEnLinea[antesEnLinea.Length - 1] : ' ';
+        prefijo = (char.IsWhiteSpace(anterior) || anterior == '(') ? "" : " ";
+    }
+    else
+    {
+        prefijo = (lineaLibre || dentroDeCondicion) ? "" : "\n";
+    }
 
     campoEditor.text = texto.Insert(posicion, prefijo + fragmento);
 
-    int indiceParentesis = fragmento.IndexOf("( )", StringComparison.Ordinal);
-    int nuevaPosicion = indiceParentesis >= 0
-        ? posicion + prefijo.Length + indiceParentesis + 2
+    // IF: el cursor va tras "IF " para escribir/insertar la condición. El resto de
+    // fragmentos dejan el cursor al final (la rosa de los vientos completa la dirección).
+    int nuevaPosicion = esIf
+        ? posicion + prefijo.Length + CursorEnFragmentoIf
         : posicion + prefijo.Length + fragmento.Length;
 
     ActualizarEditorSinMoverCursor();
